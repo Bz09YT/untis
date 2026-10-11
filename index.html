@@ -58,6 +58,32 @@
   #banner .small { font-family: Impact, "Arial Black", sans-serif; font-size: 3.6vmin; color: #fff; -webkit-text-stroke: .2vmin #111; paint-order: stroke fill; margin-top: 1vmin; letter-spacing: .2vmin; }
   #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity .8s; z-index: 25; }
   #fade.on { opacity: 1; }
+  #elev { position: absolute; right: 4vmin; top: 50%; transform: translateY(-50%); background: rgba(10,12,16,.85); border: 1px solid rgba(255,255,255,.25); padding: 1.4vmin 2vmin; min-width: 30vmin; display: none; font-size: 2.1vmin; }
+  #elev .et { font-weight: 700; letter-spacing: .4vmin; color: #ffd23a; margin-bottom: 1vmin; }
+  #elev .ef { padding: .5vmin 1vmin; color: #cfd6dd; }
+  #elev .ef.cur { color: #7fd36f; }
+  #elev .ef.sel { background: #ffd23a; color: #111; font-weight: 700; }
+  #elev .eh { margin-top: 1vmin; font-size: 1.6vmin; color: #9aa3ad; }
+  #wheel { position: fixed; inset: 0; display: none; background: radial-gradient(circle at 50% 50%, rgba(0,0,0,.55) 0, rgba(0,0,0,.25) 50vmin, transparent 70vmin); z-index: 15; }
+  #wheel .ws { position: absolute; width: 17vmin; height: 12vmin; margin: -6vmin 0 0 -8.5vmin; background: rgba(20,22,26,.8); border: .3vmin solid rgba(255,255,255,.2); border-radius: 1.2vmin; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .4vmin; }
+  #wheel .ws b { font-size: 3.6vmin; } #wheel .ws span { font-size: 1.5vmin; letter-spacing: .15vmin; } #wheel .ws i { font-size: 1.6vmin; color: #9aa3ad; font-style: normal; }
+  #wheel .ws.sel { border-color: #ffd23a; background: rgba(60,50,10,.85); transform: scale(1.08); }
+  #wheel .wc { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); font-size: 2.6vmin; font-weight: 700; color: #ffd23a; letter-spacing: .3vmin; }
+  #bigmap { position: fixed; inset: 0; display: none; z-index: 18; background: rgba(8,10,12,.92); align-items: center; justify-content: center; flex-direction: column; gap: 1.2vmin; }
+  #bigmap canvas { width: min(86vh, 92vw); height: min(86vh, 92vw); border: .3vmin solid rgba(255,255,255,.3); cursor: crosshair; }
+  #bigmap div { font-size: 1.8vmin; color: #b9c2cc; letter-spacing: .2vmin; }
+  #phone { position: absolute; right: 4vmin; bottom: 4vmin; width: 26vmin; height: 50vmin; background: #0d0f12; border: .7vmin solid #2a2d33; border-radius: 3vmin; display: none; padding: 1.6vmin 1.4vmin; box-sizing: border-box; font-size: 1.8vmin; box-shadow: 0 1vmin 4vmin rgba(0,0,0,.7); background-image: linear-gradient(160deg, #1d3550, #0d0f12 60%); }
+  #phone .bar { display: flex; justify-content: space-between; font-size: 1.5vmin; color: #cfd6dd; margin-bottom: 2vmin; }
+  #phone .apps { display: grid; grid-template-columns: 1fr 1fr; gap: 1.6vmin; }
+  #phone .app { display: flex; flex-direction: column; align-items: center; gap: .6vmin; padding: 1.2vmin .4vmin; border-radius: 1.4vmin; }
+  #phone .app b { font-size: 4vmin; } #phone .app span { font-size: 1.4vmin; text-align: center; }
+  #phone .sel { background: rgba(255,210,58,.25); outline: .25vmin solid #ffd23a; }
+  #phone .ttl { font-weight: 700; margin-bottom: 1vmin; color: #ffd23a; }
+  #phone .row { display: flex; align-items: center; gap: 1vmin; padding: 1vmin; border-radius: 1vmin; }
+  #phone .row i, #phone .call i { width: 2.6vmin; height: 2.6vmin; border-radius: 50%; display: inline-block; }
+  #phone .call { display: flex; flex-direction: column; align-items: center; gap: 1.2vmin; margin-top: 6vmin; font-size: 2.4vmin; }
+  #phone .call i { width: 9vmin; height: 9vmin; } #phone .call small { color: #9aa3ad; font-size: 1.6vmin; }
+  #phone .hint { position: absolute; left: 0; right: 0; bottom: 1.4vmin; text-align: center; font-size: 1.2vmin; color: #7d8792; }
 </style>
 </head>
 <body>
@@ -78,14 +104,19 @@
   <div id="speed"><span id="spv">0</span><small>km/h</small></div>
   <div id="hint"></div>
   <div id="sub"></div>
+  <div id="elev"></div>
+  <div id="phone"></div>
   <div id="banner"><div class="big"></div><div class="small"></div></div>
   <div id="help">
     <b>WASD</b> Laufen/Fahren · <b>Shift</b> Sprinten · <b>Leertaste</b> Springen/Handbremse<br>
     <b>Maus</b> Kamera · <b>Linksklick</b> Schießen · <b>F</b> Auto ein-/aussteigen<br>
-    <b>1 / 2 / 3</b> Franklin / Michael / Trevor · <b>E</b> Hupe / Haus (speichern) · <b>R</b> Radio<br>
+    <b>1 / 2 / 3</b> Franklin / Michael / Trevor · <b>E</b> Betreten / Aufzug / Ansprechen / Speichern · <b>R</b> Radio<br>
+    <b>Tab</b> Waffenrad · <b>Mausrad</b> Waffe · <b>Strg/C</b> Schleichen · <b>M</b> Karte · <b>F2</b> Handy · <b>F3</b> Polizeifunk<br>
     <b>H</b> Hilfe · <b>Q</b> Grafikqualität · <b>Esc</b> Pause
   </div>
 </div>
+<div id="wheel"></div>
+<div id="bigmap"><canvas width="1400" height="1400"></canvas><div>KLICK: WEGPUNKT SETZEN · RECHTSKLICK: ENTFERNEN · M / ESC: SCHLIESSEN</div></div>
 <div id="wasted"><b>WASTED</b></div>
 <div id="fade"></div>
 <div id="pause">PAUSE<small>Klicken zum Fortsetzen</small></div>
