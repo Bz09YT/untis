@@ -2686,8 +2686,9 @@ function rideStatusHTML() {
   if (!ride) return `<div class="ttl">LS Ride</div><small class="ri">Keine aktive Fahrt.</small><div class="row sel">Zurück</div>`;
   const R0 = RIDE[ride.kind], c = ride.car, st = ride.state;
   const pop = st === 'coming' ? (ride.kind === 'taxi' ? 'Dein Taxi ist unterwegs' : 'Der Chauffeur ist unterwegs') : st === 'arriving' ? `${R0.name} ist angekommen` : st === 'waiting' ? (ride.kind === 'taxi' ? 'Dein Taxi wartet – steig selbst ein (F)' : 'Dein Chauffeur hält dir die Tür auf (F)') : st === 'riding' ? (ride.dest ? 'Unterwegs zum Ziel' : 'Ziel auf der Karte (M) setzen') : st === 'arrived' ? 'Angekommen' : st === 'boarding' ? 'Einsteigen …' : 'Fahrt beendet';
+  const fresh = ride.popSt !== st; setTimeout(() => { if (ride) ride.popSt = st; }, 0);
   const info = st === 'coming' ? `Ankunft in ca. ${rideETA()} s · ${Math.round(Math.hypot(c.x - player.x, c.z - player.z))} m` : st === 'riding' ? `Fahrpreis ${fmt(ride.fare)} · ${ride.pay === 'card' ? 'Karte' : 'Bar'}` : `${R0.name} · ${ride.pay === 'card' ? 'Karte' : 'Bar'}`;
-  return `<div class="pop${st === 'coming' ? ' new' : ''}">🔔 ${pop}</div><canvas id="rmap" width="240" height="190"></canvas><div class="ri"><b>${R0.name}</b> · ${R0.car[0] === 'limo' ? 'Schwarze Limousine' : 'Gelbes Taxi'}<br>${info}</div>${['coming', 'arriving', 'waiting'].includes(st) ? `<div class="row sel">Fahrt stornieren</div>` : ''}`;
+  return `<div class="pop${fresh ? ' new' : ''}">🔔 ${pop}</div><canvas id="rmap" width="240" height="190"></canvas><div class="ri"><b>${R0.name}</b> · ${R0.car[0] === 'limo' ? 'Schwarze Limousine' : 'Gelbes Taxi'}<br>${info}</div>${['coming', 'arriving', 'waiting'].includes(st) ? `<div class="row sel">Fahrt stornieren</div>` : ''}`;
 }
 function drawRideMap() {
   const cv = $('rmap'); if (!cv || !ride) return;
@@ -2727,7 +2728,7 @@ addEventListener('keydown', e => {
   if (!started || e.repeat) return;
   if (e.code === 'KeyF' && !player.dead && !switching && !seq && ride && !uiMenu && !phone.open) {
     if (player.ride) { if (ride.state === 'riding' && !ride.stopReq) rideStopHere(); return; }
-    if (ride.state === 'waiting' && Math.hypot(...doorPoint(ride.car, -1).map((v, i) => v - (i ? player.z : player.x))) < 3.5) { boardRide(); return; }
+    if (ride.state === 'waiting' && Math.hypot(...doorPoint(ride.car, -1).map((v, i) => v - (i ? player.z : player.x))) < 6) { boardRide(); return; }
   }
   if (e.code === 'Space' && player.ride && ride?.state === 'riding' && ride.dest) skipRide();
   if (e.code === 'KeyF' && !player.dead && !switching && !seq && !player.ride) player.car ? exitCar() : enterCar();
@@ -3087,7 +3088,7 @@ function updateHUD() {
     else if (home && Math.hypot(home.x - player.x, home.z - player.z) < 2) hint = 'Drücke <b>E</b>, um zu schlafen und zu speichern';
     else if (nearestDoor(player.x, player.z, 2.2)) { const b = nearestDoor(player.x, player.z, 2.2); hint = `${floorName(b, 0)} · einfach hineingehen`; }
     else if (nearATM()) hint = 'Drücke <b>E</b> für den Geldautomaten';
-    else if (ride && ride.state === 'waiting' && Math.hypot(...doorPoint(ride.car, -1).map((v, i) => v - (i ? player.z : player.x))) < 3.5) hint = `Drücke <b>F</b>, um in ${ride.kind === 'taxi' ? 'das Taxi' : 'die Limousine'} einzusteigen`;
+    else if (ride && ride.state === 'waiting' && Math.hypot(...doorPoint(ride.car, -1).map((v, i) => v - (i ? player.z : player.x))) < 6) hint = `Drücke <b>F</b>, um in ${ride.kind === 'taxi' ? 'das Taxi' : 'die Limousine'} einzusteigen`;
     else for (const c of cars) if (c.mode !== 'wreck' && c.type !== 'police' && c.mode !== 'service' && Math.hypot(c.x - player.x, c.z - player.z) < 4.2) { hint = 'Drücke <b>F</b>, um einzusteigen'; break; }
   }
   $('hint').innerHTML = hint; $('hint').style.display = hint ? 'block' : 'none';
