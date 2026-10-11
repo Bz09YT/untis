@@ -503,7 +503,7 @@ const AWNING = ['#2c3e50', '#8e2b2b', '#2b6e4f', '#444444', '#6b4e2e', '#1f4f6e'
 function addBuilding(chunk, bx, bz, w, d, floors, cx, cz, low, solid) {
   const fd = [(bz - d / 2) - (cz - B / 2), (cx + B / 2) - (bx + w / 2), (cz + B / 2) - (bz + d / 2), (bx - w / 2) - (cx - B / 2)];
   let side = 0; for (let k = 1; k < 4; k++) if (fd[k] < fd[side]) side = k;
-  const rr0 = Math.random(), type = floors > 11 ? (Math.min(w, d) >= 19 && rr0 < 0.3 ? 'hotel' : 'office') : low && rr0 < 0.5 ? 'shop' : rr0 < 0.56 ? 'bank' : Math.random() < 0.6 ? 'apartment' : 'office';
+  const rr0 = Math.random(), type = floors > 11 ? (Math.min(w, d) >= 19 && rr0 < 0.3 ? 'hotel' : 'office') : low && rr0 < 0.5 ? 'shop' : rr0 > 0.5 && rr0 < 0.56 ? 'bank' : Math.random() < 0.6 ? 'apartment' : 'office';
   const bld = { x: bx, z: bz, w, d, floors: Math.max(2, floors), seed: Math.floor(Math.random() * 1e9), type, door: null, solid };
   if (fd[side] < 6 && Math.min(w, d) > 7) {
     const [nx, nz] = DIRS[side], tx = -nz, tz = nx;
@@ -2512,17 +2512,17 @@ function rideDrive(c, tx, tz, dt, maxSp, exact) {
 // kleine Ablaufsteuerung: jeder Schritt läuft, bis er true liefert
 const wait = sec => { let t = 0; return dt => (t += dt) >= sec; };
 const once = f => () => (f(), true);
-function walkHuman(h, pts, sp = 1.5) {
+function walkHuman(hf, pts, sp = 1.5) {
   let i = 0;
   return dt => {
     if (i >= pts.length) return true;
-    const g = h.group.position, [tx, tz] = pts[i](), dx = tx - g.x, dz = tz - g.z, d = Math.hypot(dx, dz);
+    const h = typeof hf === 'function' ? hf() : hf, g = h.group.position, [tx, tz] = pts[i](), dx = tx - g.x, dz = tz - g.z, d = Math.hypot(dx, dz);
     if (d < 0.12) { i++; return i >= pts.length; }
     const st = Math.min(d, sp * dt); g.x += dx / d * st; g.z += dz / d * st; g.y = groundH(g.x, g.z);
     h.group.rotation.y += angDiff(h.group.rotation.y, Math.atan2(dx, dz)) * Math.min(1, dt * 8); animHuman(h, sp, dt); return false;
   };
 }
-const faceStep = (h, ang) => { let t = 0; return dt => { h.group.rotation.y += angDiff(h.group.rotation.y, ang()) * Math.min(1, dt * 8); animHuman(h, 0, dt); return (t += dt) > 0.35; }; };
+const faceStep = (hf, ang) => { let t = 0; return dt => { const h = hf(); h.group.rotation.y += angDiff(h.group.rotation.y, ang()) * Math.min(1, dt * 8); animHuman(h, 0, dt); return (t += dt) > 0.35; }; };
 const rideSay = (k, line) => say(line, { who: RIDE[k].who, voice: RIDE[k].voice, rate: RIDE[k].rate, h: ride?.ch || ride?.drv, prio: true, color: '#f2c200' });
 // Chauffeur: aussteigen, ums Auto herum zur Beifahrertür, Tür aufhalten
 function chauffeurToDoor(c) {
@@ -2530,16 +2530,16 @@ function chauffeurToDoor(c) {
   return [
     once(() => { c.doors[0].target = 1; sfx.door(); }), wait(0.5),
     once(() => { ride.ch = takeDriver(c); }), wait(0.3), once(() => { c.doors[0].target = 0; }),
-    walkHuman(ride.ch, [P0(W / 2 + 0.9, L / 2 + 0.8), P0(-(W / 2 + 0.9), L / 2 + 0.8), P0(-(W / 2 + 1.3), zh + 0.35)]),
-    faceStep(ride.ch, () => c.yaw + Math.PI), once(() => { c.doors[1].target = 1; sfx.door(); }), wait(0.5),
-    faceStep(ride.ch, () => Math.atan2(player.x - ride.ch.group.position.x, player.z - ride.ch.group.position.z)),
+    walkHuman(() => ride.ch, [P0(W / 2 + 0.9, L / 2 + 0.8), P0(-(W / 2 + 0.9), L / 2 + 0.8), P0(-(W / 2 + 1.3), zh + 0.35)]),
+    faceStep(() => ride.ch, () => c.yaw + Math.PI), once(() => { c.doors[1].target = 1; sfx.door(); }), wait(0.5),
+    faceStep(() => ride.ch, () => Math.atan2(player.x - ride.ch.group.position.x, player.z - ride.ch.group.position.z)),
   ];
 }
 function chauffeurBack(c) {
   const W = c.T.W, L = c.T.L, P0 = (lx, lz) => () => carLocal(c, lx, lz);
   return [
     once(() => { c.doors[1].target = 0; sfx.door(); }), wait(0.4),
-    walkHuman(ride.ch, [P0(-(W / 2 + 0.9), L / 2 + 0.8), P0(W / 2 + 0.9, L / 2 + 0.8), () => doorPoint(c, 1)]),
+    walkHuman(() => ride.ch, [P0(-(W / 2 + 0.9), L / 2 + 0.8), P0(W / 2 + 0.9, L / 2 + 0.8), () => doorPoint(c, 1)]),
     once(() => { c.doors[0].target = 1; sfx.door(); }), wait(0.45),
     once(() => { setDriver(c, ride.ch); ride.ch = null; }), wait(0.3), once(() => { c.doors[0].target = 0; sfx.door(); }), wait(0.4),
   ];
