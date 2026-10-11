@@ -78,7 +78,7 @@ function setupPost() {
 }
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.2, 2600);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.25, 2600);
 scene.fog = new THREE.FogExp2(0xa9cdee, 0.0011);
 addEventListener('resize', applySize);
 applySize();
@@ -475,7 +475,7 @@ const trees = [], lamps = [];
 async function buildCity(progress) {
   // Boden
   const grass = new THREE.Mesh(new THREE.PlaneGeometry(8000, 8000), new THREE.MeshStandardMaterial({ map: TEX.grass, roughness: 1 }));
-  TEX.grass.repeat.set(1600, 1600); grass.rotation.x = -Math.PI / 2; grass.position.y = -0.05; grass.receiveShadow = true;
+  TEX.grass.repeat.set(1600, 1600); grass.rotation.x = -Math.PI / 2; grass.position.y = -0.6; grass.receiveShadow = true;
   scene.add(grass);
   const roadSize = EXT * 2 + 8;
   const asphalt = new THREE.Mesh(new THREE.PlaneGeometry(roadSize, roadSize), new THREE.MeshStandardMaterial({ map: TEX.asphalt, roughness: 0.92 }));
