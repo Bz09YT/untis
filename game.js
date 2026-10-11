@@ -6,6 +6,7 @@ import { RenderPass } from 'three/addons/pp/RenderPass.js';
 import { ShaderPass } from 'three/addons/pp/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/pp/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/pp/OutputPass.js';
+import { loadHumans, makeHuman, animHuman, disposeHuman, setHumanShadow, aimPose, punchPose } from './humans.js';
 
 // ---------- Helpers ----------
 const $ = id => document.getElementById(id);
@@ -678,182 +679,21 @@ function buildProps() {
   scene.add(pole, head, lampGlow);
 }
 
-// ---------- Humans ----------
-const SKIN = ['#8d5524', '#c68642', '#e0ac69', '#f1c27d', '#e8bfa0', '#5a3a22', '#3d2414', '#a8714a'];
+// ---------- Menschen (Modelle & Animationen in humans.js) ----------
+const SKIN_T = ['#ffffff', '#f2dccb', '#e0bc9c', '#b8876a', '#8a5a40', '#6a4030'];
 const HAIR = ['#120c08', '#2a1c12', '#4a3322', '#7a5a36', '#b8975e', '#2b2b2b', '#6a6a6a'];
-const EYES = ['#3b2414', '#2e4f6e', '#4b5d2e', '#5a3a1a', '#1d1d1d'];
 const CLOTH = ['#b03a2e', '#2e86c1', '#28b463', '#f1c40f', '#7d3c98', '#e67e22', '#ecf0f1', '#17202a', '#566573', '#a04000', '#1abc9c', '#d98880', '#34495e', '#c0b283'];
+const OFFICE = ['#f4f6f8', '#cfe0f2', '#e8e2d4', '#2f3a4a', '#9fb7c9', '#ffffff'];
 const PANTS = ['#1f2a44', '#2b2b2b', '#5d4e3a', '#3f4a3c', '#7a7a7a', '#14213d', '#4a5d7a', '#c2b59b'];
-function colorBy(g, fn) {
-  const p = g.attributes.position, n = p.count, a = new Float32Array(n * 3), c = new THREE.Color();
-  for (let i = 0; i < n; i++) { c.set(fn(p.getY(i), p.getX(i), p.getZ(i))); a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
-  g.setAttribute('color', new THREE.BufferAttribute(a, 3)); return g;
+const FEM_T = ['#ffffff', '#f0e6dc', '#e6d8ff', '#d8f0e6', '#ffe2d0', '#d0dcf0'];
+const MALE_V = ['thorsten', 'karlsson', 'pavoque'], FEM_V = ['kerstin', 'ramona'];
+function pedLook(office = false) {
+  if (Math.random() < 0.45) return { gender: 'f', tint: pick(FEM_T) };
+  return { gender: 'm', skin: pick(SKIN_T), shirt: pick(office ? OFFICE : CLOTH), pants: pick(PANTS), shoes: pick(['#ffffff', '#3a3a3a', '#8a6a4a', '#c0c0c0']), hair: pick(HAIR), beard: Math.random(), hairStyle: pick(['buzz', 'buzz', 'slick', 'bald']), hat: Math.random() < 0.2 ? pick(['#3a2a1c', '#222222', '#c8a070']) : null };
 }
-// Gesichtstextur (Kugel-UV: Gesichtsmitte bei u = 0.25)
-const faceCache = new Map();
-function faceMat(L) {
-  const key = [L.skin, L.hair, L.beard, L.eye, L.hairStyle].join('|');
-  if (faceCache.has(key)) return faceCache.get(key);
-  const sk = new THREE.Color(L.skin), sh = f => '#' + sk.clone().multiplyScalar(f).getHexString();
-  const tex = canvasTex(512, 256, (c, W, H) => {
-    c.fillStyle = L.skin; c.fillRect(0, 0, W, H);
-    const rg = c.createRadialGradient(128, 135, 8, 128, 135, 150);
-    rg.addColorStop(0, 'rgba(255,235,220,0.12)'); rg.addColorStop(0.6, 'rgba(0,0,0,0)'); rg.addColorStop(1, 'rgba(0,0,0,0.2)');
-    c.fillStyle = rg; c.fillRect(0, 0, W, H);
-    speckle(c, W, H, 2500, 0.03, 0.05);
-    if (L.beard > 0) {
-      c.fillStyle = L.hair;
-      for (let i = 0; i < 9000 * L.beard; i++) {
-        const x = 128 + rnd(-62, 62), y = rnd(132, 235);
-        if (((x - 128) / 62) ** 2 + ((y - 165) / 72) ** 2 > 1) continue;
-        if (y < 152 && Math.abs(x - 128) < 48) continue;
-        if (Math.abs(x - 128) < 14 && y > 170 && y < 184) continue;
-        c.globalAlpha = rnd(0.15, 0.5) * Math.min(1, L.beard * 1.4); c.fillRect(x, y, rnd(1, 2.5), rnd(1.5, 3));
-      }
-      c.globalAlpha = 1;
-    }
-    for (const s of [-1, 1]) {
-      const ex = 128 + s * 26, ey = 122;
-      c.fillStyle = 'rgba(0,0,0,0.16)'; c.beginPath(); c.ellipse(ex, ey + 1, 15, 9, 0, 0, 7); c.fill();
-      c.fillStyle = '#f3efe9'; c.beginPath(); c.ellipse(ex, ey, 10, 5, 0, 0, 7); c.fill();
-      c.fillStyle = L.eye; c.beginPath(); c.arc(ex, ey, 4.6, 0, 7); c.fill();
-      c.fillStyle = '#080808'; c.beginPath(); c.arc(ex, ey, 2.2, 0, 7); c.fill();
-      c.fillStyle = '#fff'; c.fillRect(ex + 1, ey - 2.5, 1.6, 1.6);
-      c.strokeStyle = sh(0.3); c.lineWidth = 2.2; c.beginPath(); c.ellipse(ex, ey + 1, 10.5, 6, 0, Math.PI * 1.05, Math.PI * 1.95); c.stroke();
-      c.strokeStyle = L.hairStyle === 'bald' ? sh(0.45) : L.hair; c.lineWidth = 4; c.lineCap = 'round';
-      c.beginPath(); c.moveTo(128 + s * 13, 109); c.quadraticCurveTo(128 + s * 26, 103, 128 + s * 39, 109); c.stroke();
-    }
-    const ng = c.createLinearGradient(116, 0, 140, 0);
-    ng.addColorStop(0, 'rgba(0,0,0,0.13)'); ng.addColorStop(0.5, 'rgba(0,0,0,0)'); ng.addColorStop(1, 'rgba(0,0,0,0.13)');
-    c.fillStyle = ng; c.fillRect(116, 124, 24, 30);
-    c.fillStyle = sh(0.45); for (const s of [-1, 1]) { c.beginPath(); c.ellipse(128 + s * 5, 155, 3, 1.8, 0, 0, 7); c.fill(); }
-    c.fillStyle = sh(0.68); c.beginPath(); c.ellipse(128, 174, 16, 3.6, 0, 0, 7); c.fill();
-    c.fillStyle = sh(0.8); c.beginPath(); c.ellipse(128, 179, 13, 4, 0, 0, 7); c.fill();
-    c.strokeStyle = sh(0.3); c.lineWidth = 1.6; c.beginPath(); c.moveTo(113, 176); c.quadraticCurveTo(128, 178.5, 143, 176); c.stroke();
-    // Haaransatz (vorne höher, hinten tiefer)
-    c.fillStyle = L.hair;
-    const band = (yF, yB, from = 0, alpha = 1) => {
-      c.globalAlpha = alpha;
-      for (let x = 0; x < W; x += 2) {
-        const d = Math.min(Math.abs(x - 128), W - Math.abs(x - 128)) / 256;
-        if (d < from) continue;
-        c.fillRect(x, 0, 2, lerp(yF, yB, smooth(0.12, 0.6, d)) + rnd(-2, 2));
-      }
-      c.globalAlpha = 1;
-    };
-    if (L.hairStyle === 'bald') { c.globalAlpha = 0.55; for (let x = 0; x < W; x += 2) { const d = Math.min(Math.abs(x - 128), W - Math.abs(x - 128)) / 256; if (d > 0.28) c.fillRect(x, 92 + rnd(-2, 2), 2, 55); } c.globalAlpha = 1; }
-    else band(L.hairStyle === 'buzz' ? 66 : 60, L.hairStyle === 'slick' ? 150 : 128, 0, L.hairStyle === 'buzz' ? 0.85 : 1);
-  });
-  const m = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 });
-  faceCache.set(key, m); return m;
-}
-const HUM = {};
-function humGeo() {
-  if (HUM.ok) return HUM;
-  const cap = (r, l, ty) => { const g = new THREE.CapsuleGeometry(r, l, 5, 14); g.translate(0, ty, 0); return g; };
-  HUM.thigh = cap(0.085, 0.32, -0.2); HUM.shin = cap(0.066, 0.34, -0.21);
-  HUM.shoe = new THREE.CapsuleGeometry(0.058, 0.14, 4, 10); HUM.shoe.rotateX(Math.PI / 2); HUM.shoe.scale(1.05, 0.75, 1); HUM.shoe.translate(0, -0.43, 0.045);
-  HUM.upper = cap(0.058, 0.22, -0.15); HUM.fore = cap(0.048, 0.21, -0.14);
-  HUM.hand = new THREE.SphereGeometry(0.052, 12, 8); HUM.hand.scale(0.8, 1.15, 0.6); HUM.hand.translate(0, -0.31, 0);
-  const prof = [[0, 0], [0.16, 0], [0.17, 0.08], [0.165, 0.22], [0.19, 0.4], [0.21, 0.5], [0.17, 0.57], [0.07, 0.61], [0, 0.61]].map(([x, y]) => new THREE.Vector2(x, y));
-  HUM.torso = new THREE.LatheGeometry(prof, 24); HUM.torso.scale(1, 1, 0.62); HUM.torso.translate(0, 0.94, 0);
-  HUM.hips = new THREE.CapsuleGeometry(0.13, 0.14, 4, 14); HUM.hips.rotateZ(Math.PI / 2); HUM.hips.scale(1, 1, 0.75); HUM.hips.translate(0, 0.93, 0);
-  HUM.neck = new THREE.CylinderGeometry(0.05, 0.058, 0.14, 12); HUM.neck.translate(0, 1.6, 0);
-  HUM.head = new THREE.SphereGeometry(0.115, 48, 32); HUM.head.scale(0.92, 1.12, 1.0);
-  const hairG = r => { const g = new THREE.SphereGeometry(r, 36, 16, 0, Math.PI * 2, 0, Math.PI * 0.42); g.rotateX(-0.35); g.scale(0.94, 1.13, 1.03); return g; };
-  HUM.hair = hairG(0.124); HUM.hairBuzz = hairG(0.118);
-  const ear = new THREE.SphereGeometry(0.026, 10, 8); ear.scale(0.5, 1, 0.8);
-  const e1 = ear.clone().translate(0.104, -0.005, -0.005), e2 = ear.clone().translate(-0.104, -0.005, -0.005);
-  const nose = new THREE.SphereGeometry(0.02, 10, 8); nose.scale(0.75, 1.25, 1); nose.translate(0, -0.012, 0.112);
-  HUM.ears = mergeGeometries([e1, e2, nose]);
-  HUM.gun = new THREE.BoxGeometry(0.05, 0.09, 0.26); HUM.gun.translate(0, 0, 0.08);
-  HUM.ok = true; return HUM;
-}
-function makeHuman(L) {
-  const G = humGeo(), g = new THREE.Group(), body = new THREE.Group(); g.add(body);
-  const skin = L.skin, meshes = [];
-  const add = (geo, parent, m = M.body) => { const o = new THREE.Mesh(geo, m); o.castShadow = true; parent.add(o); meshes.push(o); return o; };
-  const grp = (parent, x, y, z) => { const o = new THREE.Group(); o.position.set(x, y, z); parent.add(o); return o; };
-  const col = (geo, c) => colorBy(geo.clone(), () => c);
-  const legs = [], shins = [], arms = [], fores = [];
-  for (const s of [1, -1]) {
-    const leg = grp(body, s * 0.1, 0.9, 0); add(col(G.thigh, L.pants), leg);
-    const shin = grp(leg, 0, -0.42, 0); add(mergeGeometries([col(G.shin, L.pants), col(G.shoe, L.shoes)]), shin);
-    legs.push(leg); shins.push(shin);
-  }
-  add(mergeGeometries([col(G.torso, L.shirt), col(G.hips, L.pants), col(G.neck, skin)]), body);
-  for (const s of [1, -1]) {
-    const arm = grp(body, s * 0.215, 1.46, 0);
-    add(colorBy(G.upper.clone(), y => (L.sleeves !== 'long' && y < -0.13) ? skin : L.shirt), arm);
-    const fore = grp(arm, 0, -0.29, 0);
-    add(mergeGeometries([col(G.fore, L.sleeves === 'long' ? L.shirt : skin), col(G.hand, skin)]), fore);
-    arms.push(arm); fores.push(fore);
-  }
-  const head = grp(body, 0, 1.75, 0);
-  const hm = new THREE.Mesh(G.head, faceMat(L)); hm.castShadow = true; head.add(hm);
-  const extras = [col(G.ears, skin)];
-  if (L.hairStyle !== 'bald') extras.push(col(L.hairStyle === 'buzz' ? G.hairBuzz : G.hair, L.hair));
-  add(mergeGeometries(extras), head);
-  const gun = new THREE.Mesh(G.gun, mat('#222', { metalness: 0.8, roughness: 0.3 })); gun.position.set(0, -0.33, 0.06); gun.visible = false; fores[1].add(gun);
-  meshes.push(hm);
-  return { group: g, body, legL: legs[0], legR: legs[1], shinL: shins[0], shinR: shins[1], armL: arms[0], armR: arms[1], foreL: fores[0], foreR: fores[1], head, gun, meshes, phase: Math.random() * 6, t: Math.random() * 9, cast: true };
-}
-function disposeHuman(h) { for (const m of h.meshes) if (m.geometry !== HUM.head) m.geometry.dispose(); }
-function setHumanShadow(h, on) { if (h.cast === on) return; h.cast = on; for (const m of h.meshes) m.castShadow = on; }
-function animHuman(h, speed, dt, aiming = false, pose = null) {
-  const run = speed > 5;
-  h.phase += dt * (run ? speed * 1.75 : speed * 2.4); h.t += dt;
-  const a = Math.min(speed / 4.2, 1) * (run ? 0.85 : 0.55), s = Math.sin(h.phase), c = Math.cos(h.phase);
-  const breath = Math.sin(h.t * 1.8) * 0.025, elbow = -0.15 - (run ? 0.9 : 0.25 * a);
-  h.legL.rotation.x = s * a; h.legR.rotation.x = -s * a;
-  h.shinL.rotation.x = Math.max(0, c) * a * 1.4 + 0.03; h.shinR.rotation.x = Math.max(0, -c) * a * 1.4 + 0.03;
-  h.armL.rotation.set(-s * a * 0.8 + breath, 0, 0.07); h.foreL.rotation.x = elbow;
-  h.armR.rotation.set(s * a * 0.8 + breath, 0, -0.07); h.foreR.rotation.x = elbow;
-  h.body.position.set(0, Math.abs(c) * 0.035 * a, 0);
-  h.body.rotation.set(run ? 0.13 : 0.03 * a, 0, 0);
-  h.head.rotation.set(0, speed < 0.3 ? Math.sin(h.t * 0.45) * 0.35 : 0, 0);
-  h.gun.visible = aiming;
-  if (aiming) { h.armR.rotation.set(-Math.PI / 2, 0, 0); h.foreR.rotation.x = 0; h.armL.rotation.set(-1.25, 0, -0.55); h.foreL.rotation.x = -0.35; }
-  else if (pose && POSES[pose]) POSES[pose](h, h.t);
-}
-// Körperhaltungen für Tätigkeiten
-const POSES = {
-  stand() {},
-  sit(h) {
-    h.legL.rotation.x = h.legR.rotation.x = -1.5; h.shinL.rotation.x = h.shinR.rotation.x = 1.5; h.body.position.y = -0.44;
-    h.armL.rotation.set(-0.45, 0, 0.1); h.armR.rotation.set(-0.45, 0, -0.1); h.foreL.rotation.x = h.foreR.rotation.x = -0.7;
-  },
-  type(h, t) {
-    POSES.sit(h); h.armL.rotation.set(-0.75, 0, 0.15); h.armR.rotation.set(-0.75, 0, -0.15);
-    h.foreL.rotation.x = -0.75 + Math.sin(t * 14) * 0.05; h.foreR.rotation.x = -0.75 + Math.sin(t * 13 + 1) * 0.05; h.head.rotation.set(0.15, 0, 0);
-  },
-  watch(h, t) { POSES.sit(h); h.body.rotation.x = -0.12; h.head.rotation.set(0.05, Math.sin(t * 0.3) * 0.1, 0); },
-  phone(h, t) { h.armR.rotation.set(-0.5, 0, 0.35); h.foreR.rotation.x = -2.4; h.head.rotation.set(0.05, Math.sin(t * 0.7) * 0.25, 0.08); },
-  smoke(h, t) { const k = (Math.sin(t * 0.8) + 1) / 2; h.armR.rotation.set(-0.5 - k * 0.4, 0, 0.3); h.foreR.rotation.x = -1.6 - k * 0.6; },
-  talk(h, t) {
-    h.armL.rotation.set(-0.5 + Math.sin(t * 2.3) * 0.25, 0, 0.15); h.foreL.rotation.x = -1 + Math.sin(t * 3.1) * 0.3;
-    h.armR.rotation.set(-0.3 + Math.sin(t * 1.7 + 1) * 0.2, 0, -0.1); h.foreR.rotation.x = -0.8; h.head.rotation.set(Math.sin(t * 2.6) * 0.06, 0, Math.sin(t * 1.3) * 0.05);
-  },
-  lie(h) {
-    h.body.rotation.set(-Math.PI / 2, 0, 0); h.body.position.set(0, 0.62, 0.95);
-    h.legL.rotation.x = h.legR.rotation.x = 0; h.shinL.rotation.x = h.shinR.rotation.x = 0;
-    h.armL.rotation.set(0, 0, 0.1); h.armR.rotation.set(0, 0, -0.1); h.foreL.rotation.x = h.foreR.rotation.x = 0; h.head.rotation.set(0, 0, 0);
-  },
-  cook(h, t) { h.armL.rotation.set(-0.7, 0, 0.1); h.armR.rotation.set(-0.8 + Math.sin(t * 4) * 0.15, 0, -0.1); h.foreL.rotation.x = -0.6; h.foreR.rotation.x = -0.7; h.head.rotation.set(0.35, 0, 0); },
-  browse(h, t) { h.head.rotation.set(0.1, Math.sin(t * 0.6) * 0.5, 0); h.armR.rotation.set(-0.4 - Math.max(0, Math.sin(t * 0.9)) * 0.6, 0, -0.1); h.foreR.rotation.x = -0.5; },
-  look(h, t) { h.head.rotation.set(-0.05, Math.sin(t * 0.5) * 0.6, 0); },
-};
-// Gesichter-Pool für Passanten (begrenzt Texturspeicher)
-const FACE_POOL = [];
-function buildFacePool() {
-  for (let i = 0; i < 18; i++) {
-    const L = { skin: pick(SKIN), hair: pick(HAIR), beard: pick([0, 0, 0.25, 0.5, 0.8]), eye: pick(EYES), hairStyle: pick(['buzz', 'short', 'short', 'slick', 'bald']) };
-    faceMat(L); FACE_POOL.push(L);
-  }
-}
-function pedLook() {
-  return { ...pick(FACE_POOL), shirt: pick(CLOTH), pants: pick(PANTS), shoes: pick(['#1a1a1a', '#f0f0f0', '#5a3a22', '#2a2a40']), sleeves: Math.random() < 0.6 ? 'short' : 'long' };
-}
+const officeLook = () => pedLook(true);
+const voiceFor = L => L.gender === 'f' ? [pick(FEM_V), rnd(0.95, 1.08)] : [pick(MALE_V), rnd(0.9, 1.1)];
+function buildFacePool() {}
 
 // ---------- Cars ----------
 const carGeoCache = {};
@@ -1109,7 +949,7 @@ function freeBenchNear(x, z, r) {
 function makePed(x, z) {
   const p = { x, z, yaw: Math.random() * 6.28, state: 'walk', hp: 40, path: null, pi: 0, task: null, pose: null, t: 0, wait: 0, crossing: false, speedMul: 1,
     speed: rnd(1.15, 1.6), off: rnd(0.3, 0.9), traits: { jog: Math.random() < 0.12, social: Math.random(), lazy: Math.random(), phone: Math.random() } };
-  p.h = makeHuman(pedLook()); p.h.group.scale.setScalar(rnd(0.94, 1.05)); scene.add(p.h.group); peds.push(p); return p;
+  const L = pedLook(); p.h = makeHuman(L); [p.voice, p.vrate] = voiceFor(L); p.h.group.scale.setScalar(rnd(0.95, 1.05)); scene.add(p.h.group); peds.push(p); return p;
 }
 function spawnPed(minD = 25, maxD = 120) {
   if (Math.random() < 0.4) {
@@ -1170,7 +1010,7 @@ function arrive(p) {
       const dur = rnd(10, 22); p.pose = q.pose = 'talk'; p.wait = q.wait = dur;
       p.task = { type: 'talking' }; q.task = { type: 'talking' };
       p.yaw = Math.atan2(q.x - p.x, q.z - p.z); q.yaw = p.yaw + Math.PI;
-      if (Math.hypot(p.x - player.x, p.z - player.z) < 14) say(pick(LINES.chat), { who: 'Passant', pitch: rnd(0.85, 1.25) });
+      if (Math.hypot(p.x - player.x, p.z - player.z) < 14) say(pick(LINES.chat), { who: 'Passant', voice: p.voice, rate: p.vrate, h: p.h });
     } else nextTask(p);
     return;
   }
@@ -1203,7 +1043,7 @@ function scarePeds(x, z, r) {
     if (p.task?.bench) p.task.bench.occ = null;
     p.state = 'flee'; p.t = rnd(6, 10); p.path = null; p.crossing = false; if (!talker || Math.random() < 0.3) talker = p;
   }
-  if (talker && Math.hypot(talker.x - player.x, talker.z - player.z) < 30) say(pick(LINES.scared), { who: 'Passant', pitch: rnd(0.9, 1.3), rate: 1.2 });
+  if (talker && Math.hypot(talker.x - player.x, talker.z - player.z) < 30) say(pick(LINES.scared), { who: 'Passant', voice: talker.voice, rate: (talker.vrate || 1) * 1.08, h: talker.h });
 }
 let pedTalkT = 6, bumpCd = 0;
 function updatePed(p, dt, dist) {
@@ -1221,7 +1061,7 @@ function updatePed(p, dt, dist) {
   }
   const blocked = !player.car && dist < 1.1 && p.state === 'walk' && p.path;
   if (blocked) {
-    if (bumpCd <= 0) { bumpCd = 6; say(pick(LINES.bump), { who: 'Passant', pitch: rnd(0.85, 1.25) }); }
+    if (bumpCd <= 0) { bumpCd = 6; say(pick(LINES.bump), { who: 'Passant', voice: p.voice, rate: p.vrate, h: p.h }); }
     p.yaw = Math.atan2(player.x - p.x, player.z - p.z); animHuman(p.h, 0, dt, false, 'look'); return;
   }
   if (p.path) {
@@ -1246,7 +1086,7 @@ function updatePed(p, dt, dist) {
   animHuman(p.h, 0, dt, false, p.pose);
   if (pedTalkT < 0 && dist < 6 && !player.car && !player.dead) {
     pedTalkT = rnd(9, 16);
-    say(p.pose === 'phone' ? pick(LINES.phone) : pick(LINES.ped), { who: 'Passant', pitch: rnd(0.85, 1.25) });
+    say(p.pose === 'phone' ? pick(LINES.phone) : pick(LINES.ped), { who: 'Passant', voice: p.voice, rate: p.vrate, h: p.h });
   }
 }
 function updatePeds(dt) {
@@ -1331,7 +1171,8 @@ function clearFloor() {
   for (const s of INT.solids) removeSolid(s);
   INT.solids = [];
   if (INT.group) {
-    INT.group.traverse(o => { if (o.geometry && o.geometry !== HUM.head && o.geometry !== HUM.gun) o.geometry.dispose(); });
+    for (const n of INT.npcs) { INT.group.remove(n.h.group); disposeHuman(n.h); }
+    INT.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
     scene.remove(INT.group); INT.group = null;
   }
   INT.npcs = []; INT.spots = []; INT.panic = false;
@@ -1559,11 +1400,11 @@ function buildFloor(fl) {
   populateFloor(kind, r);
 }
 // ---------- Innen-NPCs ----------
-function officeLook() { return { ...pick(FACE_POOL), shirt: pick(['#f4f6f8', '#cfe0f2', '#e8e2d4', '#2f3a4a', '#9fb7c9', '#ffffff']), pants: pick(['#22252b', '#3a3d44', '#4a4f5a', '#2b2b2b']), shoes: pick(['#1a1a1a', '#3a2a1c']), sleeves: Math.random() < 0.7 ? 'long' : 'short' }; }
 function spawnINpc(role, s, look) {
-  const h = makeHuman(look || (['worker', 'reception', 'visitor'].includes(role) ? officeLook() : pedLook()));
+  const L = look || (['worker', 'reception', 'visitor'].includes(role) ? officeLook() : pedLook()), h = makeHuman(L);
   setHumanShadow(h, false); INT.group.add(h.group);
-  const n = { h, x: s.x, z: s.z, yaw: s.yaw, role, home: s, at: s, room: s.room, path: null, pi: 0, pose: s.pose, wait: rnd(4, 25), state: 'act', hp: 40, n: 0 };
+  const [voice, vrate] = voiceFor(L);
+  const n = { h, voice, vrate, x: s.x, z: s.z, yaw: s.yaw, role, home: s, at: s, room: s.room, path: null, pi: 0, pose: s.pose, wait: rnd(4, 25), state: 'act', hp: 40, n: 0 };
   if (!s.multi) s.occ = n; INT.npcs.push(n); return n;
 }
 function populateFloor(kind) {
@@ -1571,7 +1412,7 @@ function populateFloor(kind) {
   const elev = S.find(s => s.type === 'elev');
   if (kind === 'office') { const desks = free('desk'); desks.sort(() => Math.random() - 0.5); desks.slice(0, Math.min(10, Math.ceil(desks.length * 0.7))).forEach(s => spawnINpc('worker', s)); }
   else if (kind === 'flat') { for (const q of INT.rooms) if (Math.random() < 0.75) { const opts = S.filter(s => s.room === q && !s.occ && s.type !== 'window'); const s = nightF > 0.6 ? opts.find(o => o.type === 'bed') : pick(opts); if (s) spawnINpc('resident', s); } }
-  else if (kind === 'ward') { for (const s of free('bed')) if (Math.random() < 0.7) spawnINpc('patient', s); for (let k = 0; k < 2; k++) { const s = pick(free('bedside')); if (s) spawnINpc('nurse', s, { ...pick(FACE_POOL), shirt: '#7fb6c9', pants: '#7fb6c9', shoes: '#f0f0f0', sleeves: 'short' }); } }
+  else if (kind === 'ward') { for (const s of free('bed')) if (Math.random() < 0.7) spawnINpc('patient', s); for (let k = 0; k < 2; k++) { const s = pick(free('bedside')); if (s) spawnINpc('nurse', s, { gender: 'f', tint: '#cfe8f0' }); } }
   else if (kind === 'lobby') { const s = free('reception')[0]; if (s) spawnINpc('reception', s); const v = free('visit')[0]; if (v) spawnINpc('visitor', v); }
   else if (kind === 'shop') { const s = free('cashier')[0]; if (s) spawnINpc('cashier', s); for (let k = 0; k < 3; k++) { const sh = pick(free('shelf')); if (sh) spawnINpc('customer', sh); } }
   INT.elevSpot = elev; INT.respawnT = rnd(8, 20);
@@ -1664,7 +1505,7 @@ function updateInterior(dt) {
   if (INT.kind === 'flat' && INT.talkCd <= 0) for (const n of INT.npcs) {
     if (n.role !== 'resident' || n.state === 'dead') continue;
     const q = n.room, lx = player.x - IO.x, lz = player.z - IO.z;
-    if (q && !q.open && lx > q.x0 && lx < q.x1 && lz > q.z0 && lz < q.z1) { INT.talkCd = 12; say(pick(LINES.intruder), { who: 'Bewohner', pitch: rnd(0.9, 1.2), prio: true }); if (n.pose === 'lie') n.pose = 'sit'; break; }
+    if (q && !q.open && lx > q.x0 && lx < q.x1 && lz > q.z0 && lz < q.z1) { INT.talkCd = 12; say(pick(LINES.intruder), { who: 'Bewohner', voice: n.voice, rate: n.vrate, h: n.h, prio: true }); if (n.pose === 'lie') n.pose = 'sit'; break; }
   }
 }
 // Spielerbewegung innen: Treppenrampen & Etagenwechsel
@@ -1701,7 +1542,7 @@ function enterBuilding(b) {
     fade(false); INT.busy = false;
     notice(floorName(b, 0), 2600);
     const rec = INT.npcs.find(n => n.role === 'reception' || n.role === 'cashier');
-    if (rec) setTimeout(() => say(rec.role === 'cashier' ? `Willkommen bei ${INT.company}!` : `Willkommen bei ${INT.company}. Die Aufzüge sind direkt hinter mir.`, { who: rec.role === 'cashier' ? 'Kassierer' : 'Empfang', pitch: 1.1, prio: true }), 900);
+    if (rec) setTimeout(() => say(rec.role === 'cashier' ? `Willkommen bei ${INT.company}!` : `Willkommen bei ${INT.company}. Die Aufzüge sind direkt hinter mir.`, { who: rec.role === 'cashier' ? 'Kassierer' : 'Empfang', voice: rec.voice, rate: rec.vrate, h: rec.h, prio: true }), 900);
     } catch (err) { console.error(err); unloadInterior(); fade(false); INT.busy = false; }
   }, 650);
 }
@@ -1751,7 +1592,7 @@ function interiorUse() {
   if (n) {
     const L = LINES.inside[n.role] || LINES.inside.worker;
     n.yaw = Math.atan2(player.x - IO.x - n.x, player.z - IO.z - n.z);
-    say(pick(L).replace('{co}', INT.company || 'uns'), { who: { worker: 'Angestellter', resident: 'Bewohner', reception: 'Empfang', cashier: 'Kassierer', customer: 'Kunde', nurse: 'Pflegerin', patient: 'Patient', visitor: 'Besucher' }[n.role] || 'Person', pitch: rnd(0.9, 1.2), prio: true });
+    say(pick(L).replace('{co}', INT.company || 'uns'), { who: { worker: 'Angestellter', resident: 'Bewohner', reception: 'Empfang', cashier: 'Kassierer', customer: 'Kunde', nurse: 'Pflegerin', patient: 'Patient', visitor: 'Besucher' }[n.role] || 'Person', voice: n.voice, rate: n.vrate, h: n.h, prio: true });
   }
 }
 function interiorHint() {
@@ -1943,9 +1784,9 @@ let wanted = 0, wantedCool = 0, cur = 0, switching = null;
 const START = { x: 9.9, z: 20 };
 const HOMES = {}, HOSPITAL = { x: 0, z: 0, yaw: Math.PI }, POIS = [];
 const CHARS = [
-  { name: 'FRANKLIN', col: '#9be389', home: 'franklin', look: { skin: '#5b3a25', shirt: '#a9c98f', pants: '#2a3142', shoes: '#f2f2f2', hair: '#110b07', beard: 0.55, eye: '#2b1a0e', hairStyle: 'buzz', sleeves: 'short' }, car: ['coupe', '#4b1f7a'], money: 18750 },
-  { name: 'MICHAEL', col: '#6fb3ff', home: 'michael', look: { skin: '#e3b993', shirt: '#eef1f4', pants: '#34373e', shoes: '#1b1512', hair: '#3a2a1c', beard: 0.25, eye: '#3d5a7a', hairStyle: 'slick', sleeves: 'long' }, car: ['sedan', '#2d3035'], money: 64200 },
-  { name: 'TREVOR', col: '#ffa060', home: 'trevor', look: { skin: '#dba98c', shirt: '#d8d2c0', pants: '#5d6f8a', shoes: '#4a3020', hair: '#5a4632', beard: 0.45, eye: '#4d5a3a', hairStyle: 'bald', sleeves: 'short' }, car: ['suv', '#6b4a2a'], money: 3120 },
+  { name: 'FRANKLIN', col: '#9be389', home: 'franklin', look: { gender: 'm', skin: '#8a5a40', shirt: '#b8d8a0', pants: '#3a4258', shoes: '#ffffff', hair: '#111111', beard: 0.6, hairStyle: 'buzz' }, car: ['coupe', '#4b1f7a'], money: 18750 },
+  { name: 'MICHAEL', col: '#6fb3ff', home: 'michael', look: { gender: 'm', skin: '#f2dccb', shirt: '#d0d8e0', pants: '#4a4d55', shoes: '#2a2018', hair: '#3a2a1c', beard: 0.1, hairStyle: 'slick' }, car: ['sedan', '#2d3035'], money: 64200 },
+  { name: 'TREVOR', col: '#ffa060', home: 'trevor', look: { gender: 'm', skin: '#e8c4aa', shirt: '#cfc6a6', pants: '#6a7a90', shoes: '#5a4030', hair: '#5a4632', beard: 0.8, hairStyle: 'bald' }, car: ['suv', '#6b4a2a'], money: 3120 },
 ];
 function hurtPlayer(d) {
   if (player.dead || switching) return;
@@ -2035,7 +1876,7 @@ function enterCar() {
   if (!best) return;
   if (best.mode === 'ai') {
     const p = spawnPed(0, 9999); if (p) { p.x = best.x; p.z = best.z; p.state = 'free'; p.t = 6; }
-    scarePeds(best.x, best.z, 20); say(pick(LINES.carjack), { who: 'Fahrer', pitch: rnd(0.9, 1.2), prio: true });
+    scarePeds(best.x, best.z, 20); say(pick(LINES.carjack), { who: 'Fahrer', voice: p?.voice, rate: p?.vrate, h: p?.h, prio: true });
   }
   best.mode = 'player'; best.vx = best.vz = 0; best.speedF = 0;
   player.car = best; player.h.group.visible = false; sfx.door();
@@ -2124,10 +1965,33 @@ const LINES = {
 let voices = [];
 try { const lv = () => { voices = speechSynthesis.getVoices(); }; lv(); speechSynthesis.addEventListener('voiceschanged', lv); } catch (e) { /* keine Sprachausgabe */ }
 let speakUntil = 0, subT = null;
-function say(text, { who = '', pitch = 1, rate = 1, vol = 1, prio = false, color = '#ffd23a', radio = false } = {}) {
+const VOICE = { index: null, bins: {}, cache: new Map() };
+async function loadVoices() {
+  try {
+    VOICE.index = await (await fetch('voices/index.json')).json();
+    await Promise.all(Object.keys(VOICE.index).map(async v => { VOICE.bins[v] = await (await fetch(`voices/${v}.bin`)).arrayBuffer(); }));
+  } catch (e) { console.warn('Stimmen nicht geladen', e); VOICE.index = null; }
+}
+const VOICE_OF = { FRANKLIN: ['thorsten', 1], MICHAEL: ['karlsson', 1], TREVOR: ['pavoque', 0.97], Franklin: ['thorsten', 1], Michael: ['karlsson', 1], Trevor: ['pavoque', 0.97], Jamal: ['thorsten', 1.1], 'Tante Gloria': ['kerstin', 0.95], 'Lester-Hacker': ['pavoque', 1.06], Polizeifunk: ['karlsson', 1.04], 'Polizei (Megafon)': ['pavoque', 0.95], Angestellte: ['kerstin', 1.1] };
+function clipVoice(text, v) {
+  const I = VOICE.index; if (!I) return null;
+  if (I[v]?.[text]) return v;
+  const same = FEM_V.includes(v) ? FEM_V : MALE_V;
+  return [...same, ...MALE_V, ...FEM_V].find(o => I[o]?.[text]) || null;
+}
+function say(text, { who = '', pitch = 1, rate = 1, vol = 1, prio = false, color = '#ffd23a', radio = false, voice = null, h = null } = {}) {
   const now = performance.now();
   if (!prio && now < speakUntil) return false;
   speakUntil = now + 900 + text.length * 60;
+  const ci = CHARS.findIndex(c => c.name === who); if (!h && ci >= 0) h = CHARS[ci].h;
+  let [v, vr] = voice ? [voice, rate] : VOICE_OF[who] || [pick(MALE_V), rnd(0.92, 1.08)];
+  const cv = clipVoice(text, v);
+  if (cv && sfx.ready()) {
+    const sub = $('sub'); sub.innerHTML = `<b style="color:${color}">${who}:</b>${text}`; sub.style.opacity = 1;
+    clearTimeout(subT); subT = setTimeout(() => sub.style.opacity = 0, 1400 + text.length * 60);
+    let g = vol; if (h && !radio) { const d = h.group.position.distanceTo(camera.position); g *= clamp(1.4 - d / 25, 0.2, 1); }
+    sfx.speak(cv, text, vr || 1, radio, h, g, prio); return true;
+  }
   const sub = $('sub'); sub.innerHTML = `<b style="color:${color}">${who}:</b>${text}`; sub.style.opacity = 1;
   clearTimeout(subT); subT = setTimeout(() => sub.style.opacity = 0, 1400 + text.length * 60);
   if (radio) sfx.squelch();
@@ -2211,7 +2075,34 @@ const sfx = (() => {
       if (s === 0 || s === 8) [261.6, 311.1, 392].forEach(f => tone(f * (s === 8 ? 0.89 : 1), 0.7, 0.03, 'sawtooth'));
     };
   })();
+  let curVoice = null, speaking = null; const lipData = new Uint8Array(256);
+  const DIST = (() => { const c = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; c[i] = Math.tanh(x * 2.2); } return c; })();
   return {
+    speak(v, text, rate, radio, h, gain, prio) {
+      if (!ac) return;
+      const key = v + '|' + text;
+      const play = b => {
+        if (curVoice) { try { curVoice.stop(); } catch (e) { /* schon beendet */ } }
+        const s = ac.createBufferSource(); s.buffer = b; s.playbackRate.value = rate; let node = s;
+        if (radio) { const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1700; bp.Q.value = 1.1; const ws = ac.createWaveShaper(); ws.curve = DIST; s.connect(bp); bp.connect(ws); node = ws; }
+        const an = ac.createAnalyser(); an.fftSize = 256; const g = ac.createGain(); g.gain.value = (radio ? 1.3 : 1.7) * gain;
+        node.connect(an); an.connect(g); g.connect(master); if (!radio) g.connect(echo);
+        curVoice = s; speaking = { an, h };
+        s.onended = () => { if (curVoice === s) { curVoice = null; if (speaking?.h) speaking.h.talkAmp = 0; speaking = null; if (radio) this.squelch(); } };
+        if (radio) this.squelch();
+        s.start();
+      };
+      const cached = VOICE.cache.get(key);
+      if (cached) return play(cached);
+      const [off, len] = VOICE.index[v][text];
+      ac.decodeAudioData(VOICE.bins[v].slice(off, off + len)).then(b => { VOICE.cache.set(key, b); play(b); }).catch(e => console.warn(e));
+    },
+    lipSync() {
+      if (!speaking || !speaking.h) return;
+      speaking.an.getByteTimeDomainData(lipData); let s = 0;
+      for (let i = 0; i < lipData.length; i++) { const x = (lipData[i] - 128) / 128; s += x * x; }
+      speaking.h.talkAmp = Math.min(1, Math.sqrt(s / lipData.length) * 5);
+    },
     init, ready: () => !!ac,
     setPaused(p) { if (ac) p ? ac.suspend() : ac.resume(); },
     update(s) {
@@ -2528,7 +2419,7 @@ function updateScanner(dt) {
     const tgt = player.car || player;
     const line = wanted > 0
       ? pick([`Verdächtiger zuletzt gesehen in ${districtOf(lastSeen.x, lastSeen.z)}.`, `Alle Einheiten nach ${districtOf(lastSeen.x, lastSeen.z)}, Verdächtiger ist bewaffnet.`, wantedCool > 2 ? `Kein Sichtkontakt mehr, wir durchsuchen ${districtOf(lastSeen.x, lastSeen.z)}.` : `Sichtkontakt in ${districtOf(tgt.x, tgt.z)}, Verfolgung läuft.`])
-      : pick(SCAN).replace('{n}', rint(2, 40)).replace('{d}', pick(DISTRICTS.flat()));
+      : pick(SCAN).replace('{n}', pick([4, 7, 12, 21])).replace('{d}', pick(DISTRICTS.flat()));
     say(line, { who: 'Polizeifunk', color: '#6fa8ff', pitch: 0.7, rate: 1.15, vol: 0.7, radio: true });
   }
 }
@@ -2536,9 +2427,9 @@ function updateScanner(dt) {
 const phone = { open: false, screen: 'home', sel: 0, busy: false };
 let meeting = null;
 const EXTRA_CONTACTS = [
-  { name: 'Jamal', col: '#ffd23a', look: { skin: '#4a2e1c', shirt: '#2e7d4f', pants: '#1f2a44', shoes: '#f0f0f0', hair: '#0e0906', beard: 0.3, eye: '#2b1a0e', hairStyle: 'short', sleeves: 'short' }, activity: 'Basketball im Park' },
-  { name: 'Tante Gloria', col: '#ff8ac8', look: { skin: '#5b3a25', shirt: '#b0507a', pants: '#3a2a44', shoes: '#222', hair: '#1a1210', beard: 0, eye: '#2b1a0e', hairStyle: 'slick', sleeves: 'long' }, activity: 'Kaffee trinken' },
-  { name: 'Lester-Hacker', col: '#9be3ff', look: { skin: '#e8c4a8', shirt: '#6a6e5a', pants: '#4a4a44', shoes: '#3a2a1c', hair: '#6a5a4a', beard: 0.3, eye: '#3d5a7a', hairStyle: 'bald', sleeves: 'long' }, activity: 'Pläne besprechen' },
+  { name: 'Jamal', col: '#ffd23a', look: { gender: 'm', skin: '#6a4030', shirt: '#4a9a5f', pants: '#1f2a44', shoes: '#f0f0f0', hair: '#0e0906', beard: 0.4, hairStyle: 'buzz', hat: '#222222' }, activity: 'Basketball im Park' },
+  { name: 'Tante Gloria', col: '#ff8ac8', look: { gender: 'f', tint: '#ffd0e0' }, activity: 'Kaffee trinken' },
+  { name: 'Lester-Hacker', col: '#9be3ff', look: { gender: 'm', skin: '#f2dccb', shirt: '#8a8e7a', pants: '#4a4a44', shoes: '#3a2a1c', hair: '#6a5a4a', beard: 0.5, hairStyle: 'bald', hat: '#3a3a3a' }, activity: 'Pläne besprechen' },
 ];
 const CALL_LINES = {
   greet: ['Hey, was geht? Lust dich zu treffen?', 'Na, hast du kurz Zeit? Lass uns treffen.', 'Yo, ich bin in der Gegend. Treffen?'],
@@ -2759,11 +2650,11 @@ function updatePlayer(dt, raw) {
   lmbEdge = false;
   if (player.hp < 50) player.hp = Math.min(50, player.hp + dt * 1.2);
   const h = player.h; h.group.position.set(player.x, player.y, player.z); h.group.rotation.set(0, player.yaw, 0);
-  animHuman(h, Math.hypot(player.vx, player.vz), dt, player.aimT > 0 && !curW().melee, phone.open ? 'phone' : null);
-  const gw = curW().gun; h.gun.visible = h.gun.visible && !!gw; if (gw) h.gun.scale.set(...gw);
-  if (player.aimT > 0 && gw) h.armR.rotation.x = -Math.PI / 2 - camPitch * 0.8 + 0.25;
-  if (player.punchT > 0) { player.punchT -= dt; const k = Math.sin((1 - player.punchT / 0.25) * Math.PI); h.armR.rotation.set(-1.2 - k * 0.5, 0, -0.1); h.foreR.rotation.x = -0.4 + k * 0.35; }
-  if (player.sneak) { h.body.position.y -= 0.16; h.body.rotation.x += 0.3; h.legL.rotation.x -= 0.55; h.legR.rotation.x -= 0.55; h.shinL.rotation.x += 0.9; h.shinR.rotation.x += 0.9; h.head.rotation.x -= 0.25; }
+  const gw = curW().gun, aimNow = player.aimT > 0 && !!gw;
+  animHuman(h, Math.hypot(player.vx, player.vz), dt, aimNow, phone.open ? 'phone' : null, player.sneak);
+  if (aimNow) aimPose(h, camPitch);
+  h.gun.visible = aimNow; if (gw) { h.gunBase ??= h.gun.scale.x; h.gun.scale.set(gw[0] * h.gunBase, gw[1] * h.gunBase, gw[2] * h.gunBase); }
+  if (player.punchT > 0) { player.punchT -= dt; punchPose(h, Math.sin((1 - player.punchT / 0.25) * Math.PI)); }
 }
 
 function updateCars(dt, time) {
@@ -2946,7 +2837,7 @@ function frame() {
   const raw = dt;
   if (player.dead) dt *= 0.4;
   if (dt > 0) simulate(dt, raw, raw0, time);
-  updateAudio(raw);
+  updateAudio(raw); sfx.lipSync();
   updateParticles(fire, dt, 1.5); updateParticles(smoke, dt, 0.6);
   updateCamera(Math.max(dt, 0.001));
   updateSky();
@@ -2973,7 +2864,8 @@ async function boot() {
   buildMinimapBase();
   progress(0.8, 'Verkehr wird gestartet …'); await nextFrame();
   fire = makeParticles(600, true); smoke = makeParticles(700, false);
-  buildFacePool();
+  progress(0.82, 'Menschen werden geladen …'); await loadHumans('models/', k => progress(0.82 + k * 0.06));
+  progress(0.88, 'Stimmen werden geladen …'); await loadVoices();
   // Charaktere: Startpunkte an ihren Häusern, eigene Autos davor
   const carSpots = [[PARK, 26, Math.PI], null, null];
   CHARS.forEach((c, i) => {
