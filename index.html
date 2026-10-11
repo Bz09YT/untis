@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GTA – Los Santos</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: "Arial Narrow", Arial, sans-serif; color: #fff; user-select: none; }
+  canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  /* ---------- Loading screen ---------- */
+  #loading { position: fixed; inset: 0; z-index: 50; background: radial-gradient(ellipse at 50% 40%, #1b2a1d 0%, #060906 70%); display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 1s; }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  .logo { text-align: center; line-height: .9; }
+  .logo .grand { font-size: 2.2vmin; letter-spacing: 1.4vmin; font-weight: 700; color: #cfd8cf; }
+  .logo .gta { font-size: 24vmin; font-weight: 900; letter-spacing: 1vmin; font-family: Impact, "Arial Black", sans-serif;
+    background: linear-gradient(180deg, #fff 0%, #cfe7c9 45%, #7fb36f 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 .6vmin 0 #0a140a) drop-shadow(0 0 3vmin rgba(120,200,110,.35)); }
+  .logo .sub { font-size: 2.6vmin; letter-spacing: 2vmin; color: #7fb36f; margin-top: 1vmin; font-weight: 700; }
+  #bar { width: 44vmin; height: .6vmin; background: #1c261c; margin-top: 7vmin; overflow: hidden; }
+  #bar i { display: block; height: 100%; width: 0; background: #8fd07e; transition: width .15s; }
+  #loadtext { margin-top: 1.6vmin; font-size: 1.9vmin; letter-spacing: .4vmin; color: #8a9a8a; height: 2.4vmin; }
+  #start { margin-top: 2vmin; font-size: 2.4vmin; letter-spacing: .5vmin; color: #fff; display: none; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; text-shadow: 0 0 4px #000, 0 1px 2px #000; }
+  #mapwrap { position: absolute; left: 2.2vmin; bottom: 2.2vmin; width: 26vmin; height: 20vmin; border-radius: .6vmin; overflow: hidden; border: .25vmin solid rgba(255,255,255,.55); box-shadow: 0 0 2vmin #000; background: #111; }
+  #minimap { width: 100%; height: 100%; display: block; }
+  #who { position: absolute; left: 2.2vmin; bottom: 23.4vmin; font-size: 2.2vmin; font-weight: 700; letter-spacing: .3vmin; color: #9be389; }
+  #stats { position: absolute; left: 2.2vmin; bottom: .3vmin; }
+  .bars { position: absolute; left: 2.2vmin; bottom: 22.8vmin; }
+  #topright { position: absolute; right: 3vmin; top: 2.4vmin; text-align: right; }
+  #money { font-size: 5vmin; font-weight: 700; color: #7fd36f; letter-spacing: .2vmin; }
+  #clock { font-size: 2.2vmin; color: #ddd; margin-top: .4vmin; }
+  #stars { font-size: 5vmin; letter-spacing: .6vmin; margin-top: .6vmin; height: 5.4vmin; }
+  #stars span { color: rgba(255,255,255,.28); } #stars span.on { color: #ffd23a; animation: none; } #stars.flash span.on { animation: blink .5s infinite; }
+  #weapon { font-size: 2.4vmin; margin-top: .6vmin; color: #fff; }
+  #speed { position: absolute; right: 3vmin; bottom: 3vmin; font-size: 7vmin; font-weight: 700; display: none; }
+  #speed small { font-size: 2.4vmin; margin-left: .6vmin; color: #ddd; }
+  #healthwrap { position: absolute; left: 29.4vmin; bottom: 2.2vmin; width: 24vmin; }
+  .bar { height: 1.1vmin; background: rgba(0,0,0,.55); margin-bottom: .5vmin; border: 1px solid rgba(255,255,255,.25); }
+  .bar i { display: block; height: 100%; }
+  #hp i { background: #5dbb4f; } #ar i { background: #4f8bd8; }
+  #hint { position: absolute; left: 50%; bottom: 7vmin; transform: translateX(-50%); font-size: 2.6vmin; background: rgba(0,0,0,.55); padding: 1vmin 2vmin; border-radius: .4vmin; display: none; white-space: nowrap; }
+  #notice { position: absolute; left: 50%; top: 9vmin; transform: translateX(-50%); font-size: 3.4vmin; font-weight: 700; color: #ffd23a; opacity: 0; transition: opacity .4s; letter-spacing: .3vmin; }
+  #cross { position: absolute; left: 50%; top: 50%; width: 1vmin; height: 1vmin; margin: -.5vmin 0 0 -.5vmin; border: 2px solid rgba(255,255,255,.85); border-radius: 50%; display: none; box-shadow: 0 0 3px #000; }
+  #help { position: absolute; right: 3vmin; bottom: 14vmin; font-size: 1.7vmin; line-height: 1.5; text-align: right; color: #dfe; background: rgba(0,0,0,.45); padding: 1vmin 1.4vmin; border-radius: .4vmin; }
+  #wasted { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 20; background: rgba(0,0,0,.35); backdrop-filter: grayscale(1) blur(1px); }
+  #wasted b { font-family: Impact, "Arial Black", sans-serif; font-size: 20vmin; color: #c8312b; letter-spacing: 1vmin; text-shadow: 0 0 2vmin #000; }
+  #pause { position: fixed; inset: 0; display: none; z-index: 30; background: rgba(0,0,0,.6); align-items: center; justify-content: center; flex-direction: column; font-size: 3vmin; letter-spacing: .4vmin; cursor: pointer; }
+  #pause small { font-size: 1.9vmin; color: #aaa; margin-top: 1.4vmin; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div id="cross"></div>
+  <div id="topright">
+    <div id="money">$0</div>
+    <div id="clock">12:00</div>
+    <div id="stars"></div>
+    <div id="weapon">PISTOLE</div>
+  </div>
+  <div id="notice"></div>
+  <div id="who">FRANKLIN</div>
+  <div id="mapwrap"><canvas id="minimap" width="520" height="400"></canvas></div>
+  <div id="healthwrap"><div class="bar" id="ar"><i></i></div><div class="bar" id="hp"><i></i></div></div>
+  <div id="speed"><span id="spv">0</span><small>km/h</small></div>
+  <div id="hint"></div>
+  <div id="help">
+    <b>WASD</b> Laufen/Fahren · <b>Shift</b> Sprinten · <b>Leertaste</b> Springen/Handbremse<br>
+    <b>Maus</b> Kamera · <b>Linksklick</b> Schießen · <b>F</b> Auto ein-/aussteigen<br>
+    <b>H</b> Hilfe · <b>Q</b> Grafikqualität · <b>Esc</b> Pause
+  </div>
+</div>
+<div id="wasted"><b>WASTED</b></div>
+<div id="pause">PAUSE<small>Klicken zum Fortsetzen</small></div>
+
+<div id="loading">
+  <div class="logo">
+    <div class="gta">GTA</div>
+    <div class="sub">LOS SANTOS</div>
+  </div>
+  <div id="bar"><i></i></div>
+  <div id="loadtext">Lade …</div>
+  <div id="start">KLICKEN ODER TASTE DRÜCKEN ZUM STARTEN</div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/" } }
+</script>
+<script type="module" src="./game.js"></script>
+</body>
+</html>
