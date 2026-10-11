@@ -50,6 +50,14 @@
   #wasted b { font-family: Impact, "Arial Black", sans-serif; font-size: 20vmin; color: #c8312b; letter-spacing: 1vmin; text-shadow: 0 0 2vmin #000; }
   #pause { position: fixed; inset: 0; display: none; z-index: 30; background: rgba(0,0,0,.6); align-items: center; justify-content: center; flex-direction: column; font-size: 3vmin; letter-spacing: .4vmin; cursor: pointer; }
   #pause small { font-size: 1.9vmin; color: #aaa; margin-top: 1.4vmin; }
+  #sub { position: absolute; left: 50%; bottom: 13vmin; transform: translateX(-50%); max-width: 70vw; text-align: center; font-size: 2.5vmin; line-height: 1.35; opacity: 0; transition: opacity .25s; }
+  #sub b { margin-right: .6vmin; }
+  #banner { position: absolute; left: 0; right: 0; top: 30vh; text-align: center; opacity: 0; transition: opacity .5s, transform .5s; transform: scale(.9); }
+  #banner.show { opacity: 1; transform: scale(1); }
+  #banner .big { font-family: Impact, "Arial Black", sans-serif; font-size: 8vmin; font-style: italic; letter-spacing: .3vmin; color: #ffd23a; -webkit-text-stroke: .35vmin #111; paint-order: stroke fill; text-shadow: .5vmin .5vmin 0 #000; }
+  #banner .small { font-family: Impact, "Arial Black", sans-serif; font-size: 3.6vmin; color: #fff; -webkit-text-stroke: .2vmin #111; paint-order: stroke fill; margin-top: 1vmin; letter-spacing: .2vmin; }
+  #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity .8s; z-index: 25; }
+  #fade.on { opacity: 1; }
 </style>
 </head>
 <body>
@@ -69,13 +77,17 @@
   <div id="healthwrap"><div class="bar" id="ar"><i></i></div><div class="bar" id="hp"><i></i></div></div>
   <div id="speed"><span id="spv">0</span><small>km/h</small></div>
   <div id="hint"></div>
+  <div id="sub"></div>
+  <div id="banner"><div class="big"></div><div class="small"></div></div>
   <div id="help">
     <b>WASD</b> Laufen/Fahren · <b>Shift</b> Sprinten · <b>Leertaste</b> Springen/Handbremse<br>
     <b>Maus</b> Kamera · <b>Linksklick</b> Schießen · <b>F</b> Auto ein-/aussteigen<br>
+    <b>1 / 2 / 3</b> Franklin / Michael / Trevor · <b>E</b> Hupe / Haus (speichern) · <b>R</b> Radio<br>
     <b>H</b> Hilfe · <b>Q</b> Grafikqualität · <b>Esc</b> Pause
   </div>
 </div>
 <div id="wasted"><b>WASTED</b></div>
+<div id="fade"></div>
 <div id="pause">PAUSE<small>Klicken zum Fortsetzen</small></div>
 
 <div id="loading">
