@@ -1692,6 +1692,21 @@ function buildStructures() {
 // ---------- Loop ----------
 const clock = new THREE.Clock();
 let lastEnv = 0, mapT = 0, worldReady = false, qCeil = qIdx, fpsT = 0, fpsN = 0;
+function simulate(dt, raw, raw0, time) {
+  gameMin = (gameMin + dt * 0.5) % 1440;
+  if (switching) updateSwitch(raw); else updatePlayer(dt, raw);
+  updateIdleChars(dt);
+  updateCars(dt, time);
+  updatePeds(dt);
+  updatePickups(dt, time);
+  updateWanted(dt);
+  for (let i = tracers.length - 1; i >= 0; i--) { if ((tracers[i].t -= dt) < 0) { scene.remove(tracers[i].m); tracers.splice(i, 1); } }
+  flash.intensity = Math.max(0, flash.intensity - dt * 600);
+  const hm = HOMES[CHARS[cur].home]; if (hm) { hm.marker.scale.y = 1 + Math.sin(time * 3) * 0.15; hm.marker.material.opacity = 0.3 + Math.sin(time * 3) * 0.1; }
+  // Dynamische Auflösung: bei zu wenig FPS automatisch eine Stufe runter
+  fpsT += raw0; fpsN++;
+  if (fpsT > 3) { const fps = fpsN / fpsT; fpsT = 0; fpsN = 0; if (fps < 24 && qIdx > 0) { qIdx--; applySize(); notice('Auflösung automatisch angepasst: ' + QUALITY[qIdx][0], 2200); } }
+}
 function frame() {
   requestAnimationFrame(frame);
   if (!worldReady) return;
@@ -1699,21 +1714,7 @@ function frame() {
   if (paused || !started) dt = 0;
   const raw = dt;
   if (player.dead) dt *= 0.4;
-  if (dt > 0) {
-    gameMin = (gameMin + dt * 0.5) % 1440;
-    if (switching) updateSwitch(raw); else updatePlayer(dt, raw);
-    updateIdleChars(dt);
-    updateCars(dt, time);
-    updatePeds(dt);
-    updatePickups(dt, time);
-    updateWanted(dt);
-    for (let i = tracers.length - 1; i >= 0; i--) { if ((tracers[i].t -= dt) < 0) { scene.remove(tracers[i].m); tracers.splice(i, 1); } }
-    flash.intensity = Math.max(0, flash.intensity - dt * 600);
-    const hm = HOMES[CHARS[cur].home]; if (hm) { hm.marker.scale.y = 1 + Math.sin(time * 3) * 0.15; hm.marker.material.opacity = 0.3 + Math.sin(time * 3) * 0.1; }
-    // Dynamische Auflösung: bei zu wenig FPS automatisch eine Stufe runter
-    fpsT += raw0; fpsN++;
-    if (fpsT > 3) { const fps = fpsN / fpsT; fpsT = 0; fpsN = 0; if (fps < 24 && qIdx > 0) { qIdx--; applySize(); notice('Auflösung automatisch angepasst: ' + QUALITY[qIdx][0], 2200); } }
-  }
+  if (dt > 0) simulate(dt, raw, raw0, time);
   updateAudio(raw);
   updateParticles(fire, dt, 1.5); updateParticles(smoke, dt, 0.6);
   updateCamera(Math.max(dt, 0.001));
@@ -1757,7 +1758,7 @@ async function boot() {
   for (let i = 0; i < 18; i++) spawnParked(15, 230);
   for (let i = 0; i < 50; i++) spawnPed(6, 130);
   worldReady = true;
-  window.__game = { player, cars, peds, CHARS, switchChar, die, escapeWanted, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, get cool() { return wantedCool; } };
+  window.__game = { player, cars, peds, CHARS, switchChar, die, escapeWanted, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; } };
   progress(0.9, CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase() + ' wird geweckt …'); await nextFrame();
   progress(0.95, 'Shader werden kompiliert …'); await nextFrame();
   updateCamera(0.016);
