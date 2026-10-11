@@ -12,7 +12,16 @@ const HAIR_G = (() => { const g = new THREE.SphereGeometry(0.105, 32, 14, 0, Mat
 export async function loadHumans(base, onProgress) {
   const loader = new GLTFLoader(), files = ['avatar.glb', 'michelle.glb', 'xbot.glb', 'soldier.glb'];
   let done = 0;
-  const res = await Promise.all(files.map(f => loader.loadAsync(base + f).then(g => { onProgress?.(++done / files.length); return g; })));
+  // Fallback: Hosts, die keine .glb ausliefern, bekommen das Modell als Base64-Text (<name>.glb.txt)
+  const loadOne = async f => {
+    try { return await loader.loadAsync(base + f); }
+    catch (e) {
+      const r = await fetch(base + f + '.txt'); if (!r.ok) throw e;
+      const bin = Uint8Array.from(atob((await r.text()).trim()), c => c.charCodeAt(0));
+      return await loader.parseAsync(bin.buffer, base);
+    }
+  };
+  const res = await Promise.all(files.map(f => loadOne(f).then(g => { onProgress?.(++done / files.length); return g; })));
   const [rpm, mich, xbot, sold] = res;
   T.male = prep(rpm.scene, 1.82); T.female = prep(mich.scene, 1.7);
   const find = (g, n) => g.animations.find(a => a.name === n);
