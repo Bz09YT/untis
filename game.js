@@ -2488,9 +2488,20 @@ function curbPoint(x, z) {
 function rideDrive(c, tx, tz, dt, maxSp, exact) {
   const dd = Math.hypot(tx - c.x, tz - c.z), fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), rx = -fz, rz = fx;
   let wx = tx, wz = tz;
-  if (!exact || dd > 34) { [wx, wz] = roadWaypoint(c, tx, tz); const hx = wx - c.x, hz = wz - c.z, hl = Math.hypot(hx, hz) || 1; if (hl > 6) { wx += -hz / hl * LANE; wz += hx / hl * LANE; } }
+  // Ziel liegt an einer Straße: direkt anfahren nur, wenn das Auto schon auf derselben Straße ist (keine Abkürzung durch Häuser)
+  const rx0 = roadPos(clamp(Math.round(tx / P + N / 2), 0, N)), rz0 = roadPos(clamp(Math.round(tz / P + N / 2), 0, N)), vert = Math.abs(tx - rx0) < Math.abs(tz - rz0);
+  const onLine = vert ? Math.abs(c.x - rx0) < 9 : Math.abs(c.z - rz0) < 9;
+  exact = exact && onLine && dd < 60;
+  if (!exact) {
+    [wx, wz] = roadWaypoint(c, tx, tz);
+    if (wx === tx && wz === tz) { if (vert) { wx = rx0; wz = roadPos(clamp(Math.round(c.z / P + N / 2), 0, N)); } else { wz = rz0; wx = roadPos(clamp(Math.round(c.x / P + N / 2), 0, N)); } }
+    const hx = wx - c.x, hz = wz - c.z, hl = Math.hypot(hx, hz) || 1; if (hl > 6) { wx += -hz / hl * LANE; wz += hx / hl * LANE; }
+  }
+  // Watchdog: kein Fortschritt -> zurück auf die Fahrspur setzen
+  if (!c.rideWd || c.rideWd.tx !== tx || c.rideWd.tz !== tz || dd < c.rideWd.best - 3) c.rideWd = { tx, tz, best: dd, t: 0 };
+  else if ((c.rideWd.t += dt) > 7) { snapToLane(c, wx, wz); c.rideWd = null; }
   const vf = c.vx * fx + c.vz * fz, diff = angDiff(c.yaw, Math.atan2(wx - c.x, wz - c.z));
-  let tgt = exact && dd < 34 ? Math.min(maxSp, Math.max(0, dd - 0.5) * 0.7) : maxSp;
+  let tgt = exact && dd < 40 ? Math.min(maxSp, Math.max(0, dd - 0.5) * 0.7) : maxSp;
   if (Math.abs(diff) > 0.35) tgt = Math.min(tgt, 7);
   if (!(c.rideGhost > 0)) {
     for (const o of cars) { if (o === c) continue; const ox = o.x - c.x, oz = o.z - c.z, ah = ox * fx + oz * fz; if (ah > 0 && ah < 14 && Math.abs(ox * rx + oz * rz) < 2.2) tgt = Math.min(tgt, Math.max(0, (ah - 6) * 0.9)); }
@@ -2508,6 +2519,12 @@ function rideDrive(c, tx, tz, dt, maxSp, exact) {
   driveCar(c, thr, steer, tgt < 0.3 && Math.abs(vf) < 1.5, dt);
   if (c.driver && c.driver !== player.h) animHuman(c.driver, 0, dt, false, 'drive');
   return dd;
+}
+function snapToLane(c, wx, wz) {
+  const kx = clamp(Math.round(c.x / P + N / 2), 0, N), kz = clamp(Math.round(c.z / P + N / 2), 0, N), ex = Math.abs(c.x - roadPos(kx)), ez = Math.abs(c.z - roadPos(kz));
+  const ang = Math.atan2(wx - c.x, wz - c.z);
+  if (ex < ez) { const d = Math.cos(ang) < 0 ? 0 : 2; c.x = laneFor(d, kx); c.yaw = dirYaw(d); } else { const d = Math.sin(ang) > 0 ? 1 : 3; c.z = laneFor(d, kz); c.yaw = dirYaw(d); }
+  c.vx = c.vz = 0; c.av = 0; c.rideRev = 0; c.rideStuck = 0;
 }
 // kleine Ablaufsteuerung: jeder Schritt läuft, bis er true liefert
 const wait = sec => { let t = 0; return dt => (t += dt) >= sec; };
@@ -2677,7 +2694,8 @@ function updateRide(dt) {
   } else if (ride.state === 'leaving') {
     ride.away ||= { x: c.x + Math.sin(c.yaw) * 400, z: c.z + Math.cos(c.yaw) * 400 };
     rideDrive(c, ride.away.x, ride.away.z, dt, 13, false);
-    if (Math.hypot(c.x - player.x, c.z - player.z) > 170 || ride.t > 400) { if (ride.ch) { scene.remove(ride.ch.group); disposeHuman(ride.ch); } removeCar(c); ride = null; return; }
+    ride.lt = (ride.lt || 0) + dt;
+    if (Math.hypot(c.x - player.x, c.z - player.z) > 170 || ride.lt > 60) { if (ride.ch) { scene.remove(ride.ch.group); disposeHuman(ride.ch); } removeCar(c); ride = null; return; }
   } else if (ride.state !== 'boarding' && ride.state !== 'arrived') { c.vx *= 0.9; c.vz *= 0.9; driveCar(c, 0, 0, true, dt); }
   if (ride.state === 'riding' || ride.state === 'boarding' || ride.state === 'arrived') ride.t2 = (ride.t2 || 0) + dt;
   if (phone.open && phone.screen === 'ridestatus' && (ride.uiT -= dt) < 0) { ride.uiT = 0.25; renderPhone(); }
@@ -3778,7 +3796,7 @@ async function boot() {
   for (let i = 0; i < 18; i++) spawnParked(15, 230);
   for (let i = 0; i < 50; i++) spawnPed(6, 130);
   worldReady = true;
-  window.__game = { player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, setWaypoint, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get phone() { return phone; } };
+  window.__game = { player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get phone() { return phone; } };
   progress(0.9, CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase() + ' wird geweckt …'); await nextFrame();
   progress(0.95, 'Shader werden kompiliert …'); await nextFrame();
   updateCamera(0.016);
