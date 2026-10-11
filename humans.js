@@ -79,6 +79,8 @@ function rot(b, x, y, z) { if (!b) return; _e.set(x * Math.PI / 180, y * Math.PI
 const POSES = {
   sit(h) { const B = h.B; rot(B.LeftUpLeg, -90, 0, 0); rot(B.RightUpLeg, -90, 0, 0); rot(B.LeftLeg, 90, 0, 0); rot(B.RightLeg, 90, 0, 0); h.body.position.y = -0.45; },
   type(h, t) { POSES.sit(h); armsForward(h, 60, 70, 80, Math.sin(t * 14) * 3); },
+  drive(h) { POSES.sit(h); armsForward(h, 75, 55, 55); },
+  handsup(h) { const B = h.B; rot(B.RightArm, 0, 0, -150); rot(B.LeftArm, 0, 0, 150); rot(B.RightForeArm, -40, 0, 0); rot(B.LeftForeArm, -40, 0, 0); },
   watch(h) { POSES.sit(h); rot(h.B.Spine, -8, 0, 0); },
   lie(h) { h.body.rotation.x = -Math.PI / 2; h.body.position.set(0, 0.62, 0.95); },
   phone(h) { armTo(h, 'Right', 'phone'); },

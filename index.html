@@ -83,7 +83,19 @@
   #phone .row i, #phone .call i { width: 2.6vmin; height: 2.6vmin; border-radius: 50%; display: inline-block; }
   #phone .call { display: flex; flex-direction: column; align-items: center; gap: 1.2vmin; margin-top: 6vmin; font-size: 2.4vmin; }
   #phone .call i { width: 9vmin; height: 9vmin; } #phone .call small { color: #9aa3ad; font-size: 1.6vmin; }
+  #money small { display: block; font-size: 2vmin; color: #cfe8c8; letter-spacing: .1vmin; font-weight: 600; text-align: right; }
+  #fare { position: absolute; left: 50%; bottom: 14vmin; transform: translateX(-50%); display: none; padding: 1vmin 2.4vmin; border-radius: 1.2vmin; background: rgba(10,12,16,.78); border: .25vmin solid #f2c200; color: #fff; font-size: 2.2vmin; font-weight: 700; white-space: nowrap; }
+  #fare small { color: #b9c2cc; font-weight: 500; margin-left: 1.4vmin; }
+  #phone .pop { background: #f2f4f7; color: #111; border-radius: 1.2vmin; padding: 1vmin 1.2vmin; font-weight: 700; font-size: 1.6vmin; margin-bottom: 1vmin; box-shadow: 0 .6vmin 2vmin rgba(0,0,0,.5); }
+  #phone .pop.new { animation: popin .5s ease-out; }
+  @keyframes popin { from { transform: translateY(-2vmin); opacity: 0; } to { transform: none; opacity: 1; } }
+  #phone canvas { width: 100%; border-radius: 1.2vmin; display: block; }
+  #phone .ri { display: block; color: #cfd6dd; font-size: 1.5vmin; margin: 1vmin .4vmin; line-height: 1.4; }
+  #phone .ro b { font-size: 3.2vmin; } #phone .ro small { display: block; color: #9aa3ad; font-size: 1.3vmin; }
+  #phone .bank { display: grid; gap: .4vmin; padding: 1.4vmin; border-radius: 1.4vmin; background: linear-gradient(135deg, #1f6b3a, #0f3a20); }
+  #phone .bank small { color: #b8e0c4; font-size: 1.3vmin; } #phone .bank b { font-size: 3vmin; margin-bottom: .8vmin; }
   #phone .hint { position: absolute; left: 0; right: 0; bottom: 1.4vmin; text-align: center; font-size: 1.2vmin; color: #7d8792; }
+  #wasted.bust b { color: #4a7dff; }
 </style>
 </head>
 <body>
@@ -98,6 +110,7 @@
     <div id="weapon">PISTOLE</div>
   </div>
   <div id="notice"></div>
+  <div id="fare"></div>
   <div id="who">FRANKLIN</div>
   <div id="mapwrap"><canvas id="minimap" width="520" height="400"></canvas></div>
   <div id="healthwrap"><div class="bar" id="ar"><i></i></div><div class="bar" id="hp"><i></i></div></div>
