@@ -209,7 +209,7 @@ export function buildCabin(kind) {
     B.box('v', 0.9, 0.4, 1.8, 0.5, fy + 0.2, z1 - 1.3, '#d9d2c4'); // Sofa-Block hinten
     B.box('v', 0.9, 0.6, 0.2, 0.5, fy + 0.7, z1 - 0.5, '#c8c0b0');
   } else {
-    for (let r = 0; r < cfg.rows; r++) { const z = cfg.z0 + 3.2 + r * cfg.pitch; for (const sx of [-1.5, -1.04, -0.58, 0.58, 1.04, 1.5]) { seat(sx, z); seats.push({ x: sx, z, y: fy, side: sx < 0 ? -1 : 1, win: Math.abs(sx) > 1.4 }); } }
+    for (let r = 0; r < cfg.rows; r++) { const z = cfg.z0 + 3.2 + r * cfg.pitch; for (const sx of [-1.56, -1.1, -0.64, 0.64, 1.1, 1.56]) { seat(sx, z); seats.push({ x: sx, z, y: fy, side: sx < 0 ? -1 : 1, win: Math.abs(sx) > 1.4 }); } }
     for (const sd of [-1, 1]) { B.box('v', 0.5, 0.5, cfg.L - 5, sd * 1.5, fy + 2.0, cfg.z0 + cfg.L / 2 + 1, '#dedad2'); } // Gepäckfächer
   }
   B.build(g, { v: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }) });
