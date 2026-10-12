@@ -13,3 +13,7 @@ Open-World-Spiel im GTA-Stil mit Three.js. Start direkt als Franklin, ohne Intro
 **Geld:** Bargeld und Bankkonto getrennt. Fleeca-Banken (Schalter) und Geldautomaten zum Ein- und Auszahlen. Hotels: an der Rezeption Zimmer buchen, im Zimmer schlafen und speichern.
 
 **Neu:** Laternen, Ampeln und Hydranten lassen sich umfahren (Hydranten spritzen Wasser), Autos bekommen Dellen, Unfallgegner rollen aus und fahren weiter oder steigen aus. Ampeln schalten, KI-Verkehr hält bei Rot; sieht die Polizei dich über Rot fahren, gibt es einen Stern. Verhaftung führt ins Gefängnis Bolingbroke. Läden und Tankstellen: an der Kasse E zum Einkaufen, I Inventar, G Ware einstecken (Diebstahl). Getränkeautomaten am Straßenrand (E). Die Polizei unterscheidet zu Fuß / im Auto und durchsucht Gebäude Etage für Etage. Aufzug mit Tastenfeld und sanfter Fahrt.
+
+**Taxi heranwinken:** Auf ein fahrendes Taxi zugehen und es anschauen – es bremst, hält am Bordstein, F zum Einsteigen.
+
+**Modelle und Lizenzen:** Khronos glTF-Sample-Assets und three.js-Beispielassets. MandarinOrange: CC BY 4.0, Fotogrammetrie zamdreamer (2015), Material Wayfair / Eric Chadwick (2023). Avocado, BarramundiFish, WaterBottle: CC0 (Microsoft). Details in `assets/LICENSES-products.txt`.
