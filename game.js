@@ -45,13 +45,13 @@ const QUALITY = [
   ['Standard', () => dpr], ['Hoch', () => Math.max(dpr, 1.5)],
   ['Ultra HD (2x Supersampling)', () => Math.max(dpr, 2)], ['Maximum (3x Supersampling)', () => Math.max(dpr, 3)],
 ];
-let qIdx = 0;
+let qIdx = 1;
 function applySize() {
   const w = innerWidth, h = innerHeight;
   const ratio = Math.min(QUALITY[qIdx][1](), 8192 / Math.max(w, h));
   renderer.setPixelRatio(ratio);
   renderer.setSize(w, h, false);
-  if (composer) { composer.setPixelRatio(ratio); composer.setSize(w, h); if (aoPass) aoPass.enabled = qIdx >= 3; }
+  if (composer) { composer.setPixelRatio(ratio); composer.setSize(w, h); if (aoPass) aoPass.enabled = qIdx >= 2; }
   camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 // Nachbearbeitung: Bloom + Farbkorrektur (warmes Kalifornien-Licht, Sättigung, Vignette)
@@ -444,7 +444,9 @@ function genSpecial(i, j, chunk, kind) {
   } else if (kind === 'prison') {
     const h = 4.4, x0 = cx - B / 2 + 1.5, x1 = cx + B / 2 - 1.5, z0 = cz - B / 2 + 1.5, z1 = cz + B / 2 - 1.5, gw = 8, L = x1 - x0, sw = (L - gw) / 2;
     const wall = (w, d, x, z) => { chunk.roofs.push(box(w, h, d, x, y0 + h / 2, z, '#bfb8aa')); addSolid(x - w / 2, x + w / 2, z - d / 2, z + d / 2, h + 1); for (const o of [0.3, 0.75]) chunk.roofs.push(box(Math.max(w, 0.06), 0.05, Math.max(d, 0.06), x, y0 + h + o, z, '#9a9a9a')); for (let q = 0; q < Math.max(w, d); q += 3) chunk.roofs.push(box(0.06, 0.9, 0.06, w > d ? x - w / 2 + q : x, y0 + h + 0.45, w > d ? z : z - d / 2 + q, '#666')); };
-    wall(L, 0.6, cx, z1); wall(0.6, z1 - z0, x0, cz); wall(0.6, z1 - z0, x1, cz); wall(sw, 0.6, x0 + sw / 2, z0); wall(sw, 0.6, x1 - sw / 2, z0);
+    const gx = cx - 12.5; wall(gx - 0.45 - x0, 0.6, (x0 + gx - 0.45) / 2, z1); wall(x1 - gx - 0.45, 0.6, (x1 + gx + 0.45) / 2, z1);
+    chunk.roofs.push(box(0.9, h - 1.25, 0.6, gx, y0 + 1.25 + (h - 1.25) / 2, z1, '#bfb8aa')); addSolid(gx - 0.45, gx + 0.45, z1 - 0.3, z1 + 0.3, h + 1, 1.2);
+    wall(0.6, z1 - z0, x0, cz); wall(0.6, z1 - z0, x1, cz); wall(sw, 0.6, x0 + sw / 2, z0); wall(sw, 0.6, x1 - sw / 2, z0);
     for (const [tx, tz] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) { chunk.roofs.push(box(1.3, 8.6, 1.3, tx, y0 + 4.3, tz, '#8a8478'), box(3.6, 2.4, 3.6, tx, y0 + 9.8, tz, '#d8d2c4'), box(3.2, 1.0, 3.7, tx, y0 + 10.0, tz, '#2a3440'), box(4.0, 0.3, 4.0, tx, y0 + 11.15, tz, '#5b5f63')); addSolid(tx - 0.7, tx + 0.7, tz - 0.7, tz + 0.7, 9); }
     for (const px of [-gw / 2 - 0.5, gw / 2 + 0.5]) { chunk.roofs.push(box(1.0, h + 2.6, 1.0, cx + px, y0 + (h + 2.6) / 2, z0, '#8a8478')); addSolid(cx + px - 0.5, cx + px + 0.5, z0 - 0.5, z0 + 0.5, h + 3); }
     reg(cx, cz + 11, 38, 18, 3 * 3.6, 3, 'prison', 'concrete', '#cfc8b8');
@@ -452,13 +454,98 @@ function genSpecial(i, j, chunk, kind) {
     for (const bx of [cx - 14, cx + 14]) chunk.roofs.push(box(0.15, 3.05, 0.15, bx, y0 + 1.5, z0 + 12, '#777'), box(1.8, 1.05, 0.08, bx, y0 + 3.0, z0 + 12, '#eee'));
     const gate = new THREE.Mesh(new THREE.BoxGeometry(gw, h - 0.3, 0.2), mat('#3c4248', { metalness: 0.8, roughness: 0.35 })); gate.position.set(cx, y0 + (h - 0.3) / 2, z0); gate.castShadow = true; scene.add(gate);
     signMesh('BOLINGBROKE STRAFVOLLZUG', '#2a2a2a', '#e8e0c8', 9, 1.2, cx, y0 + h + 1.6, z0 - 0.55, Math.PI);
-    PRISON = { x: cx, z: cz, x0, x1, z0, z1, gate, gw, open: 0, target: 0, solid: addSolid(cx - gw / 2, cx + gw / 2, z0 - 0.3, z0 + 0.3, h), inside: { x: cx, z: z0 + 3 }, people: [] };
+    // Zellentrakt an der Nordmauer: 6 Zellen mit Gittern, Pritschen, Toiletten
+    const cz0 = z1 - 3.4, cells = [];
+    for (let k = 0; k <= 6; k++) { const xb = cx - 15 + k * 5; chunk.roofs.push(box(0.25, 3.0, 3.4, xb, y0 + 1.5, cz0 + 1.7, '#a8a196')); addSolid(xb - 0.13, xb + 0.13, cz0, z1, 3); }
+    chunk.roofs.push(box(30.3, 0.25, 3.6, cx, y0 + 3.1, cz0 + 1.7, '#8a8478'));
+    for (let k = 0; k < 6; k++) {
+      const xc = cx - 12.5 + k * 5; cells.push(xc);
+      for (let q = -2.35; q <= 2.36; q += 0.2) if (Math.abs(q) > 0.7 || k > 0) chunk.roofs.push(box(0.045, 2.9, 0.045, xc + q, y0 + 1.45, cz0, '#5a5f66'));
+      chunk.roofs.push(box(4.8, 0.08, 0.08, xc, y0 + 2.9, cz0, '#5a5f66'), box(4.8, 0.08, 0.08, xc, y0 + 0.08, cz0, '#5a5f66'));
+      if (k > 0) addSolid(xc - 2.4, xc + 2.4, cz0 - 0.1, cz0 + 0.1, 3); else { addSolid(xc - 2.4, xc - 0.7, cz0 - 0.1, cz0 + 0.1, 3); addSolid(xc + 0.7, xc + 2.4, cz0 - 0.1, cz0 + 0.1, 3); }
+      chunk.roofs.push(box(0.9, 0.45, 2.0, xc + 1.6, y0 + 0.3, cz0 + 2.1, '#6a6a6a'), box(0.85, 0.12, 1.9, xc + 1.6, y0 + 0.58, cz0 + 2.1, '#d8d4c8'), box(0.45, 0.45, 0.5, xc - 1.9, y0 + 0.23, cz0 + 2.9, '#e8e8e8'));
+    }
+    // Zellentür (Spielerzelle) zum Aufschieben und das lockere Lüftungsgitter in der Rückwand
+    const dg = []; for (let q = -0.6; q <= 0.61; q += 0.2) { const bg = new THREE.BoxGeometry(0.045, 2.9, 0.045); bg.translate(q, 1.45, 0); dg.push(bg); }
+    const bg2 = new THREE.BoxGeometry(1.4, 0.08, 0.08); bg2.translate(0, 1.4, 0); dg.push(bg2);
+    const cellDoor = new THREE.Mesh(mergeGeometries(dg), mat('#4a4f56', { metalness: 0.8, roughness: 0.4 })); cellDoor.position.set(cells[0], y0, cz0 - 0.06); scene.add(cellDoor);
+    const vg = []; for (let q = -0.38; q <= 0.39; q += 0.095) { const b3 = new THREE.BoxGeometry(0.03, 1.0, 0.03); b3.translate(q, 0, 0); vg.push(b3); } for (const yy of [-0.48, 0.48]) { const b4 = new THREE.BoxGeometry(0.9, 0.05, 0.05); b4.translate(0, yy, 0); vg.push(b4); }
+    const vent = new THREE.Mesh(mergeGeometries(vg), mat('#6a6e72', { metalness: 0.7, roughness: 0.5 })); vent.position.set(gx, y0 + 0.62, z1 - 0.32); scene.add(vent);
+    PRISON = { x: cx, z: cz, x0, x1, z0, z1, gate, gw, open: 0, target: 0, solid: addSolid(cx - gw / 2, cx + gw / 2, z0 - 0.3, z0 + 0.3, h), inside: { x: cx, z: z0 + 3 }, people: [],
+      cell: { x: cells[0], z: cz0 + 1.6, front: cz0, door: cellDoor, doorSolid: addSolid(cells[0] - 0.7, cells[0] + 0.7, cz0 - 0.1, cz0 + 0.1, 3), open: 0, vent, ventSolid: addSolid(gx - 0.45, gx + 0.45, z1 - 0.35, z1 + 0.35, 1.2), gx }, cells, corridorZ: cz0 - 2.6 };
     POIS.push({ x: cx, z: z0 - 3, col: '#d8a860', sym: '⛓' });
   }
+}
+// Gefängnis: Zelle, Kaution, Wärter, Ausbruch
+function jailReset() {
+  const C0 = PRISON.cell; C0.open = 0; C0.door.position.x = C0.x; if (!C0.doorSolid) C0.doorSolid = addSolid(C0.x - 0.7, C0.x + 0.7, C0.front - 0.1, C0.front + 0.1, 3);
+  C0.vent.rotation.set(0, 0, 0); C0.vent.position.set(C0.gx, 0.2 + 0.62, PRISON.z1 - 0.32); if (!C0.ventSolid) C0.ventSolid = addSolid(C0.gx - 0.45, C0.gx + 0.45, PRISON.z1 - 0.35, PRISON.z1 + 0.35, 1.2);
+  player.jail = { state: 'cell', vent: 0, warn: 0, k: 0 };
+}
+function jailUse() {
+  const J = player.jail, C0 = PRISON.cell; if (!J) return false;
+  if (J.state === 'cell' && Math.abs(player.x - C0.x) < 1.2 && Math.abs(player.z - (C0.front + 0.5)) < 0.9) {
+    if (player.money + (player.bank || 0) < 200) { notice('Kaution: 200 $ – du hast nicht genug Geld. Versuch auszubrechen (Lüftungsgitter hinten)!', 3200); return true; }
+    if (!(pay(200, 'cash') || pay(200, 'card'))) return true;
+    J.state = 'bail'; notice('Kaution bezahlt (200 $) – ein Wärter kommt und schließt auf', 2600);
+    say(pick(LINES.bail), { who: 'Wärter', voice: 'pavoque', color: '#d8a860', prio: true }); return true;
+  }
+  return false;
+}
+function updateJail(dt) {
+  const J = player.jail, P0 = PRISON, C0 = P0.cell; if (!J) return;
+  wanted = 0; wantedCool = 0;
+  // Zellentür gleitet auf
+  const tgtOpen = J.state === 'free' ? 1 : 0;
+  if (C0.open !== tgtOpen) { C0.open = clamp(C0.open + Math.sign(tgtOpen - C0.open) * dt * 0.8, 0, 1); C0.door.position.x = C0.x + C0.open * 1.4; if (C0.open > 0.7 && C0.doorSolid) { removeSolid(C0.doorSolid); C0.doorSolid = null; } }
+  // Lüftungsgitter lösen (E gedrückt halten), Wärter darf es nicht sehen
+  const atVent = J.state === 'cell' && Math.abs(player.x - C0.gx) < 0.9 && player.z > P0.z1 - 1.6;
+  const g = P0.guard, guardSees = g && Math.abs(g.x - C0.x) < 6 && Math.abs(g.z - C0.front) < 4;
+  if (atVent && keys.KeyE && !uiMenu) {
+    if (guardSees) { if ((J.warn -= dt) <= 0) { J.warn = 4; J.vent = Math.max(0, J.vent - 0.35); say(pick(LINES.guardWarn), { who: 'Wärter', voice: 'pavoque', color: '#d8a860', prio: true, h: g.h }); } }
+    else { J.vent += dt / 14; player.act = { pose: 'pickup', t: 0.2 }; if (Math.random() < dt * 3) sfx.click(); }
+    if (J.vent >= 1 && C0.ventSolid) { removeSolid(C0.ventSolid); C0.ventSolid = null; J.state = 'escaping'; C0.vent.rotation.x = -Math.PI / 2; C0.vent.position.set(C0.gx, 0.24, P0.z1 - 0.9); sfx.hit(); notice('Das Gitter ist ab! Kriech durch die Öffnung nach draußen!', 2600); }
+  }
+  // draußen?
+  if (J.state === 'escaping' && player.z > P0.z1 + 0.6) {
+    player.jail = null; addWanted(0, 2); notice('AUSGEBROCHEN!', 2000); P0.alarm = 25;
+    setTimeout(() => say(pick(LINES.breakout), { who: 'Polizeifunk', radio: true, color: '#6fa8ff', prio: true }), 800);
+  }
+  if (J.state === 'free' && Math.hypot(player.x - P0.x, player.z - (P0.z0 + 4)) < 9) P0.target = 1;
+  if (J.state === 'free' && player.z < P0.z0 - 3) { player.jail = null; notice('Du bist frei', 1600); }
+  // Aufgeben (K halten)
+  if (keys.KeyK && J.state === 'cell') { J.k += dt; if (J.k > 2) { player.jail = null; notice('Du hast aufgegeben', 1500); die(); } } else J.k = 0;
+}
+function jailHint() {
+  const J = player.jail, C0 = PRISON?.cell; if (!J || !C0) return '';
+  if (J.state === 'cell' && Math.abs(player.x - C0.gx) < 0.9 && player.z > PRISON.z1 - 1.6) return `<b>E</b> gedrückt halten: Lüftungsgitter lösen (${Math.round(J.vent * 100)} %) – nicht erwischen lassen!`;
+  if (J.state === 'cell' && Math.abs(player.x - C0.x) < 1.2 && Math.abs(player.z - (C0.front + 0.5)) < 0.9) return player.money + (player.bank || 0) >= 200 ? 'Drücke <b>E</b>: Kaution 200 $ zahlen' : 'Kaution 200 $ – zu wenig Geld. Ausbrechen oder <b>K</b> halten zum Aufgeben';
+  if (J.state === 'cell') return 'Du sitzt in der Zelle · Kaution an der Gittertür (E) · Lüftungsgitter hinten (E halten) · <b>K</b> halten: aufgeben';
+  if (J.state === 'bail') return 'Warte, bis der Wärter aufschließt';
+  if (J.state === 'free') return 'Die Zelle ist offen – geh zum Tor';
+  if (J.state === 'escaping') return 'Kriech durch die Öffnung in der Mauer!';
+  return '';
 }
 // Gefängnis: Tor, Häftlinge im Hof, Wachen auf den Türmen
 function updatePrison(dt) {
   const P0 = PRISON; if (!P0) return;
+  updateJail(dt);
+  // Wärter im Zellengang: patrouilliert, schließt nach Kaution auf
+  const nearP = Math.hypot(P0.x - player.x, P0.z - player.z) < 140;
+  if (nearP && !P0.guard) { const h = makeHuman(COP_LOOK); scene.add(h.group); P0.guard = { h, x: P0.x + 10, z: P0.corridorZ, tx: P0.x - 14, mode: 'patrol', t: 0 }; }
+  else if (!nearP && P0.guard && Math.hypot(P0.x - player.x, P0.z - player.z) > 180) { scene.remove(P0.guard.h.group); disposeHuman(P0.guard.h); P0.guard = null; }
+  const G = P0.guard;
+  if (G) {
+    const J = player.jail, C0 = P0.cell; let tx = G.tx, tz = P0.corridorZ, sp = 1.3, pose = null;
+    if (J && J.state === 'bail') { tx = C0.x + 0.9; tz = C0.front - 0.7; sp = 1.8; if (Math.hypot(tx - G.x, tz - G.z) < 0.2) { G.t += dt; sp = 0; pose = 'cook'; if (G.t > 1.6) { J.state = 'free'; G.t = 0; sfx.door(); say(pick(LINES.prison), { who: 'Wärter', voice: 'pavoque', color: '#d8a860', prio: true, h: G.h }); } } }
+    else if (Math.abs(G.x - G.tx) < 0.3) G.tx = G.tx < P0.x ? P0.x + 14 : P0.x - 14;
+    const dx = tx - G.x, dz = tz - G.z, d = Math.hypot(dx, dz);
+    if (d > 0.05 && sp) { const st = Math.min(d, sp * dt); G.x += dx / d * st; G.z += dz / d * st; G.h.group.rotation.y += angDiff(G.h.group.rotation.y, Math.atan2(dx, dz)) * Math.min(1, dt * 6); }
+    else G.h.group.rotation.y += angDiff(G.h.group.rotation.y, Math.atan2(C0.x - G.x, C0.front - G.z)) * Math.min(1, dt * 6);
+    G.h.group.position.set(G.x, 0.2, G.z); animHuman(G.h, sp && d > 0.05 ? sp : 0, dt, false, pose);
+  }
+  // Alarm nach Ausbruch: Turmwachen schießen
+  if (P0.alarm > 0) { P0.alarm -= dt; if (!player.dead && !player.car && Math.hypot(player.x - P0.x, player.z - P0.z) < 60 && Math.random() < dt * 1.5) { sfx.shot(P0.x1, P0.z1, 0.8); if (Math.random() < 0.4) hurtPlayer(8); } }
   const near = Math.hypot(P0.x - player.x, P0.z - player.z) < 140;
   if (near && !P0.people.length) {
     for (let k = 0; k < 7; k++) { const h = makeHuman(INMATE_LOOK()); scene.add(h.group); P0.people.push({ h, x: rnd(P0.x0 + 4, P0.x1 - 4), z: rnd(P0.z0 + 5, P0.z0 + 19), tx: 0, tz: 0, w: rnd(0, 6), guard: false }); }
@@ -676,7 +763,7 @@ function addBuilding(chunk, bx, bz, w, d, floors, cx, cz, low, solid) {
       ob(type === 'shop' ? 6 : 3.6, 0.14, 1.5, 0.75, 0.2 + 3.4, pick(AWNING));
     }
     if (type === 'shop') ob(5.5, 2.2, 0.1, 0.12, 0.2 + 1.7, '#5d7891');
-    if (type === 'shop' || type === 'bank' || Math.random() < 0.15) { const ax = fx + nx * 0.35 + tx * 2.4, az = fz + nz * 0.35 + tz * 2.4; chunk.roofs.push(nx ? box(0.5, 1.7, 0.75, ax, 0.2 + 0.85, az, '#2a6a3a') : box(0.75, 1.7, 0.5, ax, 0.2 + 0.85, az, '#2a6a3a')); ATMS.push({ x: ax + nx * 0.7, z: az + nz * 0.7 }); }
+    if (type === 'shop' || type === 'bank' || Math.random() < 0.15) { const ax = fx + nx * 0.35 + tx * 2.4, az = fz + nz * 0.35 + tz * 2.4; chunk.roofs.push(nx ? box(0.5, 1.7, 0.75, ax, 0.2 + 0.85, az, '#2a6a3a') : box(0.75, 1.7, 0.5, ax, 0.2 + 0.85, az, '#2a6a3a')); ATMS.push({ x: ax + nx * 0.7, z: az + nz * 0.7, bx: ax, bz: az }); }
     if (type === 'bank' || type === 'hotel') bld.sign = true;
     bld.door = { x: fx + nx * 1.1, z: fz + nz * 1.1, nx, nz, tx, tz };
   }
@@ -1115,32 +1202,51 @@ const carCircles = c => { const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), o = 
 // Arcade-Fahrphysik (Spieler, Polizei, herrenlose Autos)
 function driveCar(c, throttle, steerIn, hand, dt) {
   knockCheck(c, dt);
-  const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), rx = -fz, rz = fx;
-  let vf = c.vx * fx + c.vz * fz, vl = c.vx * rx + c.vz * rz;
-  const max = c.mode === 'wreck' ? 0 : c.T.max;
-  if (throttle > 0) vf += c.T.acc * throttle * Math.max(0.1, 1 - vf / max) * dt;
-  else if (throttle < 0) { if (vf > 0.5) vf -= 28 * dt; else vf = Math.max(-11, vf - 9 * dt); }
-  else vf -= Math.sign(vf) * Math.min(Math.abs(vf), 3.5 * dt);
-  if (hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 9 * dt);
-  vf *= 1 - 0.12 * dt;
-  vl *= Math.exp(-(hand ? 1.3 : 9) * dt);
-  const maxSteer = 0.62 / (1 + Math.abs(vf) * 0.045);
-  c.steer = lerp(c.steer, steerIn * maxSteer, Math.min(1, dt * 7));
-  const yawRate = (vf / 2.8) * Math.tan(c.steer) * (hand ? 1.45 : 1);
-  c.yaw += yawRate * dt + c.av * dt; c.av *= Math.exp(-2.2 * dt);
-  // Federung: Nicken beim Bremsen/Beschleunigen, Rollen in Kurven (Feder-Dämpfer)
-  const acc = (vf - (c.lastVf ?? vf)) / Math.max(dt, 1e-3); c.lastVf = vf;
-  const tp = clamp(-acc * 0.0065, -0.07, 0.07), tr = clamp(vf * yawRate * 0.0065, -0.09, 0.09);
-  c.pv = ((c.pv || 0) + ((tp - c.pitch) * 90 - (c.pv || 0) * 9) * dt); c.pitch += c.pv * dt;
-  c.rv = ((c.rv || 0) + ((tr - c.roll) * 80 - (c.rv || 0) * 8) * dt); c.roll += c.rv * dt;
-  if ((Math.abs(vl) > 3.5 || (hand && Math.abs(vf) > 7)) && c === player.car) skidMark(c);
-  const nfx = Math.sin(c.yaw), nfz = Math.cos(c.yaw);
-  c.vx = nfx * vf + -nfz * vl; c.vz = nfz * vf + nfx * vl;
-  c.x += c.vx * dt; c.z += c.vz * dt;
+  const n = Math.max(1, Math.ceil(dt / 0.0125)), h = dt / n;
+  for (let k = 0; k < n; k++) carStep(c, throttle, steerIn, hand, h);
+  const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), vf = c.vx * fx + c.vz * fz;
+  // Federung: Nicken/Rollen aus den tatsächlichen Beschleunigungen (Feder-Dämpfer, weich wie bei GTA 4)
+  const tp = clamp(-(c.lastAx || 0) * 0.0075, -0.08, 0.08), tr = clamp(-(c.lastAy || 0) * 0.0095, -0.11, 0.11);
+  c.pv = ((c.pv || 0) + ((tp - c.pitch) * 70 - (c.pv || 0) * 6.5) * dt); c.pitch += c.pv * dt;
+  c.rv = ((c.rv || 0) + ((tr - c.roll) * 60 - (c.rv || 0) * 6) * dt); c.roll += c.rv * dt;
+  if ((Math.abs(c.slipR || 0) > 0.14 || Math.abs(c.slipF || 0) > 0.2) && Math.hypot(c.vx, c.vz) > 5 && c === player.car) skidMark(c);
   c.spin += vf * dt / 0.36;
   carWorldCollide(c);
   c.y = lerp(c.y, groundH(c.x, c.z), Math.min(1, dt * 10));
   c.speedF = vf;
+}
+const CAR_MASS = { sedan: 1500, coupe: 1350, suv: 2100, compact: 1100, police: 1750, pickup: 2050, van: 2250, convertible: 1400, muscle: 1650, limo: 2600 };
+// Fahrphysik: Reifenkräfte (Pacejka-ähnlich) an Vorder- und Hinterachse, Lastverlagerung, Gier-Trägheit
+function carStep(c, thr, steerIn, hand, dt) {
+  const T = c.T, m = CAR_MASS[c.type] || 1500, L = Math.max(2.2, T.L - 1.76), a = L * 0.47, b = L * 0.53, g = 9.81, H = 0.55, Iz = m * (T.L * T.L + T.W * T.W) / 11;
+  const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), rx = -fz, rz = fx;
+  const u = c.vx * fx + c.vz * fz, v = c.vx * rx + c.vz * rz; let w = c.av || 0;
+  const wreck = c.mode === 'wreck', ai = c !== player.car;
+  const maxSteer = 0.56 / (1 + Math.abs(u) * 0.055);
+  c.steer = lerp(c.steer, steerIn * maxSteer, Math.min(1, dt * 5.5));
+  const d = c.steer;
+  let Fx = 0;
+  if (!wreck) {
+    if (thr > 0) Fx = m * T.acc * 0.5 * thr * (u < -0.5 ? 3 : Math.max(0.05, 1 - (u / T.max) ** 1.6));
+    else if (thr < 0) Fx = u > 0.6 ? -m * 9.2 * -thr : (u > -11 ? -m * 4.5 * -thr : 0);
+  }
+  Fx -= 0.45 * u * Math.abs(u) + m * 0.13 * Math.sign(u) * Math.min(1, Math.abs(u));
+  if (thr === 0 && !hand) Fx -= m * 0.8 * Math.sign(u) * Math.min(1, Math.abs(u));
+  if (hand) Fx -= Math.sign(u) * Math.min(Math.abs(u) * m * 2.5, m * 4);
+  const ax = c.lastAx || 0, Nf = Math.max(0.2 * m * g, m * g * b / L - m * ax * H / L), Nr = Math.max(0.2 * m * g, m * g * a / L + m * ax * H / L);
+  const mu = (wreck ? 0.55 : 1.0) * (ai ? 1.25 : 1), muR = hand ? mu * 0.36 : mu * 1.08;
+  const cs = Math.cos(d), sn = Math.sin(d), vF = v - a * w, uw = u * cs - vF * sn, vw = u * sn + vF * cs;
+  const af = Math.atan2(vw, Math.max(Math.abs(uw), 2.5)), ar = Math.atan2(v + b * w, Math.max(Math.abs(u), 2.5));
+  const Fyf = -mu * Nf * Math.sin(1.4 * Math.atan(8.5 * af));
+  let Fyr = -muR * Nr * Math.sin(1.4 * Math.atan(8.5 * ar));
+  if (thr > 0 && !ai) Fyr *= Math.sqrt(Math.max(0.3, 1 - Math.min(1, Fx / (mu * Nr)) ** 2 * 0.55)); // Reibungskreis: Gas im Scheitel -> Heck kommt
+  const Ff = Fx + Fyf * sn, Fr = Fyr + Fyf * cs, tau = -a * Fyf * cs + b * Fyr;
+  w += tau / Iz * dt; w *= Math.exp(-0.35 * dt);
+  c.vx += (fx * Ff + rx * Fr) / m * dt; c.vz += (fz * Ff + rz * Fr) / m * dt;
+  c.av = w; c.yaw += w * dt;
+  c.lastAx = lerp(ax, Ff / m, Math.min(1, dt * 6)); c.lastAy = lerp(c.lastAy || 0, Fr / m, Math.min(1, dt * 6));
+  if (Math.hypot(c.vx, c.vz) < 0.12 && thr === 0) { c.vx *= 0.7; c.vz *= 0.7; c.av *= 0.7; }
+  c.x += c.vx * dt; c.z += c.vz * dt; c.slipR = ar; c.slipF = af;
 }
 function carWorldCollide(c) {
   const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw);
@@ -1212,7 +1318,7 @@ function explosion(x, y, z) {
   for (let i = 0; i < 50; i++) emit(smoke, x, y + 1, z, rnd(-3, 3), rnd(1, 5), rnd(-3, 3), rnd(2, 4), rnd(2, 3), 2.5, 0.12, 0.12, 0.12);
   sfx.boom(x, z);
   const d = Math.hypot(player.x - x, player.z - z); if (d < 40) shake = Math.max(shake, 1 - d / 40);
-  if (d < 9) hurtPlayer(70 * (1 - d / 9));
+  if (d < 9) { const l0 = d || 1; knockPlayer((player.x - x) / l0 * 12 * (1 - d / 9), 6 * (1 - d / 9) + 2, (player.z - z) / l0 * 12 * (1 - d / 9), 70 * (1 - d / 9)); }
   for (const p of [...peds, ...officers]) if (p.state !== 'dead' && Math.hypot(p.x - x, p.z - z) < 8) { if (p.cop) killPed(p, false); else { const d0 = Math.hypot(p.x - x, p.z - z) || 1; launchPed(p, { vx: (p.x - x) / d0 * 14, vz: (p.z - z) / d0 * 14 }); p.impact = 20; } }
   for (const c of cars) if (c.mode !== 'wreck') { const dc = Math.hypot(c.x - x, c.z - z); if (dc > 0.1 && dc < 8) damageCar(c, 45 * (1 - dc / 8)); }
 }
@@ -1643,8 +1749,9 @@ function buildFloor(f) {
   // Boden & Decke (mit Schacht- und Treppenöffnungen)
   const fm = { flat: rp([T.mats.wood, T.mats.wood2, T.mats.tile]), office: T.mats[rp(TH.floor)], lobby: T.mats[rp(TH.lobby)], ward: T.mats.tile, police: T.mats.tile2 }[kind] || rp([T.mats.tile, T.mats.tile2]);
   const core = !small;
-  g.add(holedPlane(-hw, hw, -hd, hd, 0.005, fm, 2, core && hole ? [ELEV, H1, H2] : []));
-  g.add(holedPlane(-hw, hw, -hd, hd, 3.4, T.mats.ceil, 2, core && !top ? [ELEV, H1, H2] : [], true));
+  const holes = b.noLift ? [H1, H2] : [ELEV, H1, H2];
+  g.add(holedPlane(-hw, hw, -hd, hd, 0.005, fm, 2, core && hole ? holes : []));
+  g.add(holedPlane(-hw, hw, -hd, hd, 3.4, T.mats.ceil, 2, core && !top ? holes : [], true));
   for (let x = -hw + 2; x < hw - 1; x += 3.6) for (let z = -hd + 2; z < hd - 1; z += 3.6) if (!core || Math.abs(x) > 3.8 || Math.abs(z) > 3.6) pan.push(box(1.2, 0.04, 0.6, x, 3.37, z, '#fff'));
   // Außenwand mit echten Fenstern (Blick auf die Stadt)
   const ext = rp(['#c9cdd1', '#d8d2c6', '#bfc4bf', '#cfc8d6']);
@@ -1669,10 +1776,12 @@ function buildFloor(f) {
     wallX(-3.2, 3.2, -3, [[-2.6, -1.2], [0.1, 1.3]], coreCol, 0.2); wallX(-3.2, 3.2, 3, [], coreCol, 0.2);
     wallZ(-3, 3, -3.2, [], coreCol, 0.2); wallZ(-3, 3, 3.2, [], coreCol, 0.2); wallZ(-3, 3, -0.5, [], coreCol, 0.16); wallX(-3.2, -0.5, -0.4, [], coreCol, 0.16);
     iSolid(-3.2, -0.5, -0.4, 3);
+    if (b.noLift) { fb(1.4, 3.4, 0.2, -1.9, 1.7, -3, coreCol, true); } else {
     const dl = new THREE.Mesh(new THREE.BoxGeometry(0.72, 2.3, 0.06), T.mats.door), dr = dl.clone(); dl.position.set(-2.25, 1.15, -3.13); dr.position.set(-1.55, 1.15, -3.13); g.add(dl, dr); F.doors = [dl, dr];
-    F.doorSolid = fSolid(F, -2.6, -1.2, -3.12, -2.98, -0.05, 3.0);
-    fb(0.1, 0.18, 0.05, -0.95, 1.2, -3.13, '#ffd23a'); fb(0.7, 0.2, 0.04, -1.9, 2.75, -3.13, '#111');
-    scr.push(box(0.6, 0.14, 0.02, -1.9, 2.75, -3.16, '#fff'));
+    F.callBtn = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 0.04), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffa020, emissiveIntensity: 0.15 })); F.callBtn.position.set(-0.95, 1.2, -3.16); g.add(F.callBtn);
+    F.ind = liftCanvas(128, 48); const im = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.22), new THREE.MeshBasicMaterial({ map: F.ind.tex })); im.position.set(-1.9, 2.75, -3.16); im.rotation.y = Math.PI; g.add(im);
+    if (INT.cab) drawLiftDisp(F.ind, INT.cab.floor, 0); }
+    if (!b.noLift) { F.doorSolid = fSolid(F, -2.6, -1.2, -3.12, -2.98, -0.05, 3.0); fb(0.16, 0.26, 0.04, -0.95, 1.2, -3.13, '#9aa0a6'); fb(0.7, 0.26, 0.04, -1.9, 2.75, -3.13, '#111'); }
     wallZ(-1.4, 1.6, 1.3, [], coreCol, 0.1);
     if (!top) {
       for (let k = 0; k < 10; k++) { const ht = (k + 1) * 0.18; fb(1.7, ht, 0.3, 2.22, ht / 2, -1.4 + 0.15 + k * 0.3, '#8d8f92'); }
@@ -1872,27 +1981,57 @@ function unloadFloor(F) {
   INT.root.remove(F.group); INT.floors.delete(F.f);
 }
 // ---------- Aufzug: fahrende Kabine mit Türen ----------
+function liftCanvas(w, h) { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; return { cv, ctx: cv.getContext('2d'), tex }; }
+function drawLiftDisp(d, floor, dir) {
+  const x = d.ctx, W = d.cv.width, H = d.cv.height; x.fillStyle = '#050505'; x.fillRect(0, 0, W, H);
+  x.fillStyle = '#ff8a1a'; x.font = `bold ${H * 0.8}px Courier New, monospace`; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(`${dir > 0 ? '▲' : dir < 0 ? '▼' : ' '}${floor === 0 ? 'E' : floor}`, W / 2, H / 2 + 2); d.tex.needsUpdate = true;
+}
+function drawLiftPanel() {
+  const C = INT.cab; if (!C) return; const d = C.pd, x = d.ctx, W = d.cv.width, H = d.cv.height, n = INT.b.floors, cols = n > 20 ? 3 : 2, rows = Math.ceil(n / cols);
+  const gr = x.createLinearGradient(0, 0, W, H); gr.addColorStop(0, '#c9ced3'); gr.addColorStop(1, '#8a9097'); x.fillStyle = gr; x.fillRect(0, 0, W, H);
+  x.fillStyle = '#050505'; x.fillRect(16, 10, W - 32, 34); x.fillStyle = '#ff8a1a'; x.font = 'bold 26px Courier New'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(C.floor === 0 ? 'E' : String(C.floor), W / 2, 28);
+  const top = 56, cell = Math.min((W - 20) / cols, (H - top - 8) / rows), r = cell * 0.36;
+  for (let f = 0; f < n; f++) {
+    const col = f % cols, row = rows - 1 - Math.floor(f / cols), cx = 10 + cell * (col + 0.5) + (W - 20 - cell * cols) / 2, cy = top + cell * (row + 0.5);
+    const lit = C.lit.has(f), sel = INT.panelMode && INT.sel === f;
+    x.beginPath(); x.arc(cx, cy, r + 3, 0, 7); x.fillStyle = sel ? '#ffd23a' : '#5d636a'; x.fill();
+    const bg = x.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 1, cx, cy, r); if (lit) { bg.addColorStop(0, '#fff6d0'); bg.addColorStop(1, '#ff9a10'); } else { bg.addColorStop(0, '#f4f6f8'); bg.addColorStop(1, '#a8aeb4'); }
+    x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fillStyle = bg; x.fill();
+    x.fillStyle = lit ? '#fff' : '#1a1c1f'; x.font = `bold ${Math.round(r * 1.05)}px Arial`; x.fillText(f === 0 ? 'E' : String(f), cx, cy + 1);
+  }
+  d.tex.needsUpdate = true;
+}
 function buildCab() {
   const g = new THREE.Group(), m = new THREE.MeshStandardMaterial({ color: 0x9aa1a8, metalness: 0.7, roughness: 0.28 }), wood = new THREE.MeshStandardMaterial({ color: 0x6b4a32, roughness: 0.6 });
   const add = (w, h, d, x, y, z, mat = m) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); o.position.set(x, y, z); o.receiveShadow = true; g.add(o); return o; };
   add(2.45, 0.08, 2.4, 0, 0.04, 0, wood); add(2.45, 2.7, 0.06, 0, 1.35, 1.2); add(0.06, 2.7, 2.4, -1.22, 1.35, 0); add(0.06, 2.7, 2.4, 1.22, 1.35, 0); add(2.45, 0.06, 2.4, 0, 2.72, 0);
   add(1.2, 0.03, 0.8, 0, 2.68, 0, new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff4e0, emissiveIntensity: 2 }));
-  add(2.3, 0.05, 0.05, 0, 0.95, 1.12, m); add(0.2, 0.5, 0.03, 1.05, 1.3, -1.1, new THREE.MeshStandardMaterial({ color: 0x222, emissive: 0x3366ff, emissiveIntensity: 0.6 }));
+  add(2.3, 0.05, 0.05, 0, 0.95, 1.12, m);
+  // Frontblenden neben der Tür (vorher offen -> man sah im Schacht die Etagen vorbeiziehen)
+  add(0.64, 2.7, 0.06, -0.92, 1.35, -1.215); add(0.64, 2.7, 0.06, 0.92, 1.35, -1.215); add(2.45, 0.22, 0.06, 0, 2.61, -1.215);
+  add(2.2, 1.3, 0.02, 0, 1.6, 1.165, new THREE.MeshStandardMaterial({ color: 0xd8e0e6, metalness: 1, roughness: 0.06 }));
   const dl = add(0.62, 2.5, 0.05, -0.31, 1.3, -1.18), dr = add(0.62, 2.5, 0.05, 0.31, 1.3, -1.18);
-  g.position.set(-1.85, floorY(0), -1.7); INT.root.add(g);
-  return { g, dl, dr, y: floorY(0), target: 0, floor: 0, v: 0, open: 1, state: 'open', wait: 6 };
+  // Tastenfeld (Canvas-Textur) und Etagenanzeige in der Kabine
+  const pd = liftCanvas(160, 320), panel = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.6), new THREE.MeshStandardMaterial({ map: pd.tex, emissive: 0xffffff, emissiveMap: pd.tex, emissiveIntensity: 0.55, roughness: 0.3, metalness: 0.3 }));
+  panel.position.set(0.92, 1.3, -1.18); g.add(panel);
+  const dd = liftCanvas(128, 48), disp = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.16), new THREE.MeshBasicMaterial({ map: dd.tex })); disp.position.set(0, 2.62, -1.18); g.add(disp);
+  const b = INT.b, start = b.floors > 1 ? rint(0, b.floors - 1) : 0;
+  g.position.set(-1.85, floorY(start), -1.7); INT.root.add(g);
+  const C = { g, dl, dr, y: floorY(start), target: start, floor: start, v: 0, open: start === 0 ? 1 : 0, state: start === 0 ? 'open' : 'idle', wait: 6, panel, pd, disp, dd, lit: new Set(), calls: new Set(), shown: '' };
+  return C;
 }
 function callCab(f) {
   const C = INT.cab; if (!C) return;
   C.target = f;
   if (C.state === 'moving') return;
-  if (C.floor === f && Math.abs(C.y - floorY(f)) < 0.01) { if (C.state !== 'open') C.state = 'opening'; C.wait = 8; return; }
-  C.state = 'closing'; C.floor0 = C.floor; C.hold = 0.45;
+  if (C.floor === f && Math.abs(C.y - floorY(f)) < 0.01 && C.state !== 'moving') { C.after = null; if (C.state !== 'open') C.state = 'opening'; C.wait = 8; C.calls.delete(f); C.lit.delete(f); return; }
+  C.after = null; C.state = C.state === 'idle' ? 'moving' : 'closing'; C.floor0 = C.floor; C.hold = 0.45; if (C.state === 'moving') sfx.hum(true);
 }
 function inCab() { const [lx, lz] = toLocal(player.x, player.z); return lx > ELEV[0] && lx < ELEV[1] && lz > ELEV[2] && lz < ELEV[3] && Math.abs(player.y - INT.cab.y) < 1.2; }
 function updateCab(dt) {
   const C = INT.cab, ty = floorY(C.target);
-  if (C.state === 'closing') { C.open = Math.max(0, C.open - dt * 1.1); if (C.open === 0 && (C.hold -= dt) <= 0) { C.state = Math.abs(C.y - ty) > 0.01 ? 'moving' : 'opening'; if (C.state === 'moving') sfx.hum(true); } }
+  if (C.state === 'closing') { C.open = Math.max(0, C.open - dt * 1.1); if (C.open === 0 && (C.hold -= dt) <= 0) { if (C.after === 'idle' && Math.abs(C.y - ty) <= 0.01) { C.state = 'idle'; C.after = null; } else { C.state = Math.abs(C.y - ty) > 0.01 ? 'moving' : 'opening'; if (C.state === 'moving') sfx.hum(true); } } }
   else if (C.state === 'moving') {
     // Fahrprofil: sanft anfahren, gleichmäßig fahren, weich abbremsen (begrenzte Beschleunigung)
     const d = ty - C.y, amax = 1.15, vmax = 3.4, want = Math.sign(d) * Math.min(vmax, Math.sqrt(2 * amax * Math.abs(d)) * 0.95);
@@ -1902,7 +2041,13 @@ function updateCab(dt) {
     C.floor = clamp(Math.round((C.y - Y0) / FH), 0, INT.b.floors - 1);
   }
   else if (C.state === 'opening') { C.open = Math.min(1, C.open + dt * 1.3); if (C.open === 1) { C.state = 'open'; C.wait = 8; } }
-  else if (C.state === 'open') { C.wait -= dt; if (C.wait < 0 && !inCab()) { C.state = 'closing'; C.target = C.floor; } }
+  else if (C.state === 'open') { C.wait -= dt; if (C.wait < 0 && !inCab()) { C.state = 'closing'; C.target = C.floor; C.after = 'idle'; } }
+  else if (C.state === 'idle') { C.open = 0; }
+  // Anzeigen (Kabine + alle geladenen Etagen) aktualisieren, Rufknöpfe leuchten bis die Kabine da ist
+  const dir = C.state === 'moving' ? Math.sign(C.v) : 0, key = C.floor + ':' + dir;
+  if (C.shown !== key) { C.shown = key; drawLiftDisp(C.dd, C.floor, dir); for (const F of INT.floors.values()) if (F.ind) drawLiftDisp(F.ind, C.floor, dir); drawLiftPanel(); }
+  for (const F of INT.floors.values()) if (F.callBtn) F.callBtn.material.emissiveIntensity = C.calls.has(F.f) ? 2.5 : 0.15;
+  if (C.state === 'opening' && C.open === 0 && (C.lit.has(C.floor) || C.calls.has(C.floor))) { C.lit.delete(C.floor); C.calls.delete(C.floor); drawLiftPanel(); }
   const riding = !player.car && inCab();
   C.g.position.y = C.y;
   C.dl.position.x = -0.31 - C.open * 0.6; C.dr.position.x = 0.31 + C.open * 0.6;
@@ -1914,10 +2059,7 @@ function updateCab(dt) {
     else if (o < 0.6 && !F.doorSolid) F.doorSolid = fSolid(F, -2.6, -1.2, -3.12, -2.98, -0.05, 3.0);
   }
   if (riding) { player.y = C.y; player.vy = 0; player.grounded = true; player.h.group.position.y = C.y; }
-  // Stockwerksanzeige während der Fahrt
-  const hud = $('lifthud'), showH = riding && C.state !== 'open';
-  if (showH) { const lab = `${C.state === 'moving' ? (C.v > 0 ? '▲' : '▼') : '•'} ${liftLab(C.floor)}`; if (hud.dataset.t !== lab) { hud.dataset.t = lab; hud.innerHTML = `<span>${lab}</span><small>${floorName(INT.b, C.target)}</small>`; } }
-  if ((hud.style.display === 'block') !== showH) hud.style.display = showH ? 'block' : 'none';
+  player.h.group.visible = !INT.panelMode;
 }
 // ---------- Etagen laden/entladen, Gebäude aktivieren ----------
 const curFloorOf = y => clamp(Math.floor((y - Y0 + 0.6) / FH), 0, INT.b.floors - 1);
@@ -1940,7 +2082,9 @@ function activateBuilding(b) {
   INT.root = new THREE.Group(); INT.root.position.set(b.x, 0, b.z); INT.root.rotation.y = th; scene.add(INT.root);
   if (b.solid) { removeSolid(b.solid); }
   INT.company = b.type === 'office' ? companyOf(b, 1) : '';
-  INT.cab = b.small ? null : buildCab();
+  b.noLift = !b.small && b.floors <= 4 && !['hospital', 'hotel', 'police'].includes(b.type);
+  INT.cab = b.small || b.noLift ? null : buildCab();
+  if (INT.cab) drawLiftPanel();
   // Stencil-Portal: Fassade an der Tür ausblenden, damit man hinein sieht und hineingehen kann
   const pm = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp });
   INT.portal = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 2.85), pm); INT.portal.renderOrder = -5;
@@ -2088,7 +2232,7 @@ function intGround(x, z, y) {
   const fy = clamp(Math.floor((y - Y0 + 0.3) / FH), 0, b.floors - 1); let best = -Infinity;
   for (let f = Math.max(0, fy - 1); f <= Math.min(b.floors - 1, fy + 1); f++) {
     const base = floorY(f), c = [];
-    if (b.small || f === 0 || !(inR(ELEV) || inR(H1) || inR(H2))) c.push(base);
+    if (b.small || f === 0 || !((!b.noLift && inR(ELEV)) || inR(H1) || inR(H2))) c.push(base);
     if (!b.small && f < b.floors - 1) {
       if (lz >= -1.4 && lz <= 1.6 && lx >= 1.35 && lx <= 3.1) c.push(base + (lz + 1.4) / 3 * 1.8);
       if (lz >= 1.6 && lz <= 2.9 && lx >= -0.4 && lx <= 3.1) c.push(base + 1.8);
@@ -2100,8 +2244,8 @@ function intGround(x, z, y) {
   return best === -Infinity ? y - 5 : best;
 }
 const floorH = (x, z, y = 0.2) => { if (INT.active) { const [lx, lz] = toLocal(x, z); if (Math.abs(lx) < INT.W / 2 && Math.abs(lz) < INT.D / 2) return intGround(x, z, y); } return groundH(x, z); };
-function nearElevCall() { const [lx, lz] = toLocal(player.x, player.z); return !INT.b.small && Math.hypot(lx + 1.9, lz + 3.7) < 1.4; }
-function openElevator() { INT.menu = true; INT.sel = curFloorOf(player.y); renderElevator(); $('elev').style.display = 'block'; sfx.ding(); }
+function nearElevCall() { const [lx, lz] = toLocal(player.x, player.z); return !!INT.cab && Math.hypot(lx + 0.95, lz + 3.6) < 1.3 || !!INT.cab && Math.hypot(lx + 1.9, lz + 3.7) < 1.0; }
+function openElevator() { INT.menu = true; INT.panelMode = true; INT.sel = curFloorOf(player.y); drawLiftPanel(); sfx.click(); }
 const liftLab = f => f === 0 ? 'E' : String(f);
 function renderElevator() {
   const b = INT.b, n = b.floors, cf = INT.cab.floor, cols = n > 18 ? 5 : n > 9 ? 4 : 3, btn = [];
@@ -2110,14 +2254,15 @@ function renderElevator() {
 }
 function elevatorKey(code) {
   if (INT.pressed != null) return;
-  if (code === 'KeyW' || code === 'ArrowUp' || code === 'KeyD' || code === 'ArrowRight') { INT.sel = Math.min(INT.b.floors - 1, INT.sel + 1); sfx.click(); renderElevator(); }
-  else if (code === 'KeyS' || code === 'ArrowDown' || code === 'KeyA' || code === 'ArrowLeft') { INT.sel = Math.max(0, INT.sel - 1); sfx.click(); renderElevator(); }
+  const cols = INT.b.floors > 20 ? 3 : 2, mv = d => { INT.sel = clamp(INT.sel + d, 0, INT.b.floors - 1); sfx.click(); drawLiftPanel(); };
+  if (code === 'KeyW' || code === 'ArrowUp') mv(cols); else if (code === 'KeyS' || code === 'ArrowDown') mv(-cols);
+  else if (code === 'KeyD' || code === 'ArrowRight') mv(1); else if (code === 'KeyA' || code === 'ArrowLeft') mv(-1);
   else if (code === 'KeyE' || code === 'Enter') {
-    // Taste leuchtet auf, kurzer Piepton, dann schließen die Türen
-    INT.pressed = INT.sel; sfx.liftBeep(); renderElevator();
-    const b0 = INT.b; setTimeout(() => { if (INT.b !== b0 || !INT.cab) { INT.pressed = null; return; } INT.menu = null; $('elev').style.display = 'none'; callCab(INT.pressed); INT.pressed = null; }, 650);
+    // Finger drückt die Taste: sie leuchtet auf dem Panel, Piepton, dann Kamera zurück und Türen schließen
+    INT.pressed = INT.sel; INT.cab.lit.add(INT.sel); sfx.liftBeep(); drawLiftPanel(); player.act = { pose: 'press', t: 0.6 };
+    const b0 = INT.b; setTimeout(() => { if (INT.b !== b0 || !INT.cab) { INT.pressed = null; return; } INT.menu = null; INT.panelMode = false; callCab(INT.pressed); INT.pressed = null; drawLiftPanel(); }, 700);
   }
-  else if (code === 'KeyF' || code === 'Backspace') { INT.menu = null; $('elev').style.display = 'none'; }
+  else if (code === 'KeyF' || code === 'Backspace' || code === 'Escape') { INT.menu = null; INT.panelMode = false; drawLiftPanel(); }
 }
 function nearestINpc(r) { let best = null, bd = r; for (const n of INT.npcs) { if (n.state === 'dead' || Math.abs(n.wy - player.y) > 1.5) continue; const d = Math.hypot(n.wx - player.x, n.wz - player.z); if (d < bd) { bd = d; best = n; } } return best; }
 function myHotelFloor(F) { return player.hotel && INT.b && player.hotel.seed === INT.b.seed && F.f === player.hotel.floor; }
@@ -2127,9 +2272,9 @@ function interiorUse() {
   const near = nearestINpc(2.6);
   if (near && near.role === 'cashier' && INT.kind === 'bank') return bankMenu('Fleeca Bank · Schalter');
   if (near && near.role === 'reception' && INT.kind === 'hotel') return hotelMenu();
-  if (near && near.role === 'cashier' && ['shop', 'market', 'gas'].includes(INT.kind)) return shopMenu(INT.kind);
+  if (near && near.role === 'cashier' && ['shop', 'market', 'gas'].includes(INT.kind)) { shopClerk = near; near.yaw = Math.atan2(...toLocal(player.x, player.z).map((v, i) => v - (i ? near.z : near.x))); return shopMenu(INT.kind); }
   if (INT.cab && inCab()) return openElevator();
-  if (nearElevCall()) { callCab(curFloorOf(player.y)); notice('Aufzug gerufen', 1400); sfx.click(); return; }
+  if (nearElevCall()) { const f = curFloorOf(player.y); INT.cab.calls.add(f); callCab(f); sfx.liftBeep(); player.act = { pose: 'press', t: 0.6 }; return; }
   const n = nearestINpc(2.3);
   if (n) {
     const L = LINES.inside[n.role] || LINES.inside.worker;
@@ -2139,7 +2284,9 @@ function interiorUse() {
 }
 function interiorHint() {
   if (INT.menu) return '';
-  if (INT.cab && inCab()) return 'Drücke <b>E</b> für das Etagenmenü';
+  if (INT.panelMode) return 'Tastenfeld · <b>W/A/S/D</b> Etage wählen · <b>E</b> drücken · <b>F</b> zurück';
+  if (INT.cab && inCab()) return 'Drücke <b>E</b>, um am Tastenfeld eine Etage zu wählen';
+  if (nearElevCall()) return 'Drücke <b>E</b>, um den Aufzug zu rufen';
   if (nearElevCall()) return 'Drücke <b>E</b>, um den Aufzug zu rufen';
   const [lx, lz] = toLocal(player.x, player.z);
   if (!INT.b.small && lx > -0.5 && lx < 3.2 && lz > -3 && lz < -1.4) return 'Treppenhaus: rechts <b>hoch</b>, links <b>runter</b>';
@@ -2614,6 +2761,32 @@ const CHARS = [
   { name: 'MICHAEL', bank: 245000, col: '#6fb3ff', home: 'michael', look: { gender: 'm', skin: '#f2dccb', shirt: '#d0d8e0', pants: '#4a4d55', shoes: '#2a2018', hair: '#3a2a1c', beard: 0.1, hairStyle: 'slick' }, car: ['sedan', '#2d3035'], money: 64200 },
   { name: 'TREVOR', bank: 8600, col: '#ffa060', home: 'trevor', look: { gender: 'm', skin: '#e8c4aa', shirt: '#cfc6a6', pants: '#6a7a90', shoes: '#5a4030', hair: '#5a4632', beard: 0.8, hairStyle: 'bald' }, car: ['suv', '#6b4a2a'], money: 3120 },
 ];
+// Spieler wird umgerissen (Auto, Explosion, Sturz): fliegt, überschlägt sich, bleibt kurz liegen, steht auf
+function knockPlayer(vx, vy, vz, dmg) {
+  if (player.dead || player.car || player.ride || seq) return;
+  hurtPlayer(dmg); if (player.dead) return;
+  const sp = Math.hypot(vx, vz);
+  player.rag = { phase: 'fly', t: 0, vx, vy, vz, spin: (sp > 3 ? rnd(4, 8) : 2) * Math.min(1.4, sp / 12 + 0.4), roll: rnd(-2, 2), rx: 0, rz: 0 };
+  player.vx = player.vz = 0; shake = Math.max(shake, Math.min(0.7, sp / 20 + 0.2)); sfx.hit();
+}
+function updateRag(dt) {
+  const R0 = player.rag, h = player.h; R0.t += dt;
+  if (R0.phase === 'fly') {
+    R0.vy -= 15 * dt; player.x += R0.vx * dt; player.z += R0.vz * dt; player.y += R0.vy * dt;
+    const q = resolveCircle(player.x, player.z, 0.35, player.y + 0.6); if (q.hit) { R0.vx *= -0.3; R0.vz *= -0.3; } player.x = q.x; player.z = q.z;
+    R0.rx += R0.spin * dt; R0.rz += R0.roll * dt;
+    const gy = floorH(player.x, player.z, player.y);
+    if (player.y <= gy && R0.vy < 0) {
+      player.y = gy;
+      if (Math.abs(R0.vy) > 3 && R0.t < 3) { R0.vy *= -0.28; R0.vx *= 0.5; R0.vz *= 0.5; R0.spin *= 0.4; sfx.hit(); }
+      else { R0.phase = 'lie'; R0.t = 0; R0.rx = -Math.PI / 2; R0.rz = 0; }
+    }
+  } else if (R0.phase === 'lie') { if (R0.t > 1.3) { R0.phase = 'up'; R0.t = 0; } }
+  else { const k = Math.min(1, R0.t / 0.7); R0.rx = -Math.PI / 2 * (1 - smooth(0, 1, k)); if (k >= 1) { player.rag = null; h.group.rotation.set(0, player.yaw, 0); return; } }
+  h.group.position.set(player.x, player.y + (R0.phase === 'fly' ? 0.4 : Math.abs(Math.sin(R0.rx)) * 0.25), player.z);
+  h.group.rotation.set(R0.rx, player.yaw, R0.rz);
+  animHuman(h, 0, dt, false, R0.phase === 'up' ? 'sit' : null);
+}
 function hurtPlayer(d) {
   if (player.dead || switching) return;
   const a = Math.min(player.armor, d * 0.7); player.armor -= a; player.hp -= d - a;
@@ -2633,7 +2806,7 @@ function respawn() {
   $('wasted').style.display = 'none';
   if (INT.active) deactivateBuilding();
   const bust = player.bust; player.bust = false; $('wasted').querySelector('b').textContent = 'WASTED'; $('wasted').classList.remove('bust');
-  squadClear();
+  squadClear(); if (!bust) player.jail = null;
   const spot = bust ? (PRISON ? { x: PRISON.inside.x, z: PRISON.inside.z, yaw: Math.PI } : { x: POLICE_HQ.x, z: POLICE_HQ.z, yaw: Math.PI }) : HOSPITAL;
   Object.assign(player, { x: spot.x, z: spot.z, yaw: spot.yaw, hp: bust ? player.hp : 100, armor: 0, dead: 0, vx: 0, vz: 0, vy: 0, y: 0.2 });
   const bill = Math.min(player.money, bust ? Math.max(250, Math.round(player.money * 0.1)) : 500); player.money -= bill; wanted = 0; wantedCool = 0;
@@ -2644,9 +2817,8 @@ function respawn() {
   camYaw = player.yaw; camPitch = 0.2;
   setTimeout(() => fade(false), 400);
   if (bust && PRISON) {
-    const days = 1 + (player.bustStars || 1); gameMin = (gameMin + 7 * 60) % 1440; PRISON.target = 1;
-    banner('ENTLASSEN', `BOLINGBROKE STRAFVOLLZUG · ${days} TAGE HAFT · GELDSTRAFE -$${bill}`, 4500);
-    setTimeout(() => say(pick(LINES.prison), { who: 'Wärter', voice: 'pavoque', color: '#d8a860', prio: true }), 1600);
+    player.money += bill; jailReset(); Object.assign(player, { x: PRISON.cell.x, z: PRISON.cell.z, yaw: Math.PI });
+    banner('VERHAFTET', 'BOLINGBROKE STRAFVOLLZUG · KAUTION 200 $ ODER AUSBRECHEN', 4500);
     notice('Waffen beschlagnahmt', 3000);
   } else notice(bust ? `Polizeiwache Mission Row · Kaution: -$${bill} · Waffen beschlagnahmt` : `Krankenhaus Pillbox Hill · Rechnung: -$${bill}`, 3800);
 }
@@ -2661,6 +2833,7 @@ function applyChar(i) {
 function switchChar(i) {
   if (i === cur || switching || player.dead || !started) return;
   if (player.ride) { notice('Erst die Fahrt beenden', 1600); return; }
+  if (player.jail) { notice('Nicht im Gefängnis', 1600); return; }
   if (wanted > 0) { notice('Wechsel während einer Fahndung nicht möglich', 1800); return; }
   if (INT.inside) { notice('Erst das Gebäude verlassen', 1800); return; }
   if (player.car) exitCar(true);
@@ -2767,7 +2940,7 @@ function updateSeq(dt) {
 
 // ---------- Menüs, Bezahlen, Bank, Hotel ----------
 let uiMenu = null;
-function openMenu(title, items) { uiMenu = { title, items, sel: items.findIndex(i => i.act) }; renderMenu(); $('elev').style.display = 'block'; sfx.click(); }
+function openMenu(title, items) { uiMenu = { title, items, sel: items.findIndex(i => i.act), pose: title.startsWith('Geldautomat') ? 'atm' : null }; renderMenu(); $('elev').style.display = 'block'; sfx.click(); }
 function renderMenu() { const m = uiMenu; $('elev').innerHTML = `<div class="et">${m.title}</div>` + m.items.map((it, k) => `<div class="ef${k === m.sel ? ' sel' : ''}${it.act ? '' : ' cur'}">${it.label}</div>`).join('') + '<div class="eh">W/S wählen · E bestätigen · F schließen</div>'; }
 function menuKey(code) {
   const m = uiMenu, n = m.items.length, step = d => { let k = m.sel; do { k = (k + d + n) % n; } while (!m.items[k].act && k !== m.sel); m.sel = k; };
@@ -2783,7 +2956,8 @@ function pay(amount, method) {
   sfx.coin(); return true;
 }
 function bankMenu(where) {
-  const mv = (amt, dir) => () => { const a = amt === 'all' ? (dir > 0 ? player.money : player.bank) : amt; if (dir > 0) { if (player.money < a || a <= 0) { notice('Nicht genug Bargeld', 1400); return true; } player.money -= a; player.bank += a; notice(`Eingezahlt: ${fmt(a)}`, 1400); } else { if (player.bank < a || a <= 0) { notice('Kontostand zu niedrig', 1400); return true; } player.bank -= a; player.money += a; notice(`Abgehoben: ${fmt(a)}`, 1400); } sfx.coin(); bankMenu(where); return true; };
+  if (where.startsWith('Geldautomat')) faceATM();
+  const mv = (amt, dir) => () => { const a = amt === 'all' ? (dir > 0 ? player.money : player.bank) : amt; if (dir > 0) { if (player.money < a || a <= 0) { notice('Nicht genug Bargeld', 1400); return true; } player.money -= a; player.bank += a; notice(`Eingezahlt: ${fmt(a)}`, 1400); holdItem('cash', '#4a8a3a', 0.8); } else { if (player.bank < a || a <= 0) { notice('Kontostand zu niedrig', 1400); return true; } player.bank -= a; player.money += a; notice(`Abgehoben: ${fmt(a)}`, 1400); setTimeout(() => holdItem('cash', '#4a8a3a', 1.6), 700); sfx.click(); } sfx.coin(); bankMenu(where); return true; };
   openMenu(where, [{ label: `Konto: ${fmt(player.bank)} · Bargeld: ${fmt(player.money)}` }, { label: 'Abheben 100 $', act: mv(100, -1) }, { label: 'Abheben 500 $', act: mv(500, -1) }, { label: 'Abheben 2.000 $', act: mv(2000, -1) }, { label: 'Einzahlen 500 $', act: mv(500, 1) }, { label: 'Alles Bargeld einzahlen', act: mv('all', 1) }, { label: 'Schließen', act: () => false }]);
 }
 const HOTEL_PRICE = 180;
@@ -2808,11 +2982,17 @@ const ITEMS = {
 const SHOP_STOCK = { market: ['wasser', 'cola', 'sprunk', 'sandwich', 'chips', 'schoko', 'bier', 'medkit'], gas: ['wasser', 'cola', 'sprunk', 'burger', 'chips', 'schoko', 'kippen', 'zeitung'], shop: ['wasser', 'cola', 'schoko', 'chips', 'kippen', 'zeitung', 'weste'] };
 const HEADLINES = ['Los Santos Tagblatt: Vinewood-Star in Entzugsklinik gesichtet', 'Weazel News: Bürgermeister verspricht weniger Schlaglöcher', 'LS Tagblatt: Rekordhitze – Sprunk-Verkäufe verdoppelt', 'Polizei sucht Zeugen nach wilder Verfolgungsjagd', 'Lifeinvader-Aktie stürzt nach Datenleck ab'];
 function keepMenuSel(fn) { const s0 = uiMenu?.sel; fn(); if (uiMenu && s0 != null && uiMenu.items[s0]?.act) uiMenu.sel = s0; renderMenu(); }
+let shopClerk = null;
+function shopFx(k) {
+  const n = shopClerk; if (n && n.state !== 'dead') { n.pose = 'cook'; n.wait = 2; }
+  sfx.click(); setTimeout(() => sfx.liftBeep(), 400);
+  if (n && n.F) { const it = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.08), new THREE.MeshStandardMaterial({ color: pick(['#c4161c', '#2fbf4a', '#f2c200', '#3a6ad0', '#ffffff']) })); const [lx, lz] = toLocal(player.x, player.z); it.position.set((n.x + lx) / 2, 1.18, (n.z + lz) / 2); n.F.group.add(it); setTimeout(() => { n.F.group.remove(it); it.geometry.dispose(); holdItem('bag', '#c8a46a', 6); }, 1300); }
+}
 function shopMenu(kind) {
   const pm = player.payPref || 'cash', inv = player.inv ||= {};
   keepMenuSel(() => openMenu(INT.company || floorName(INT.b, 0).replace('EG · ', ''), [
     { label: `Bargeld ${fmt(player.money)} · Konto ${fmt(player.bank || 0)}` },
-    ...SHOP_STOCK[kind].map(k => ({ label: `${ITEMS[k].ico} ${ITEMS[k].n} – ${fmt(ITEMS[k].p)}${inv[k] ? ` <small>· ${inv[k]} dabei</small>` : ''}`, act: () => { if (pay(ITEMS[k].p, pm)) { inv[k] = (inv[k] || 0) + 1; notice(`${ITEMS[k].n} gekauft`, 1100); } shopMenu(kind); return true; } })),
+    ...SHOP_STOCK[kind].map(k => ({ label: `${ITEMS[k].ico} ${ITEMS[k].n} – ${fmt(ITEMS[k].p)}${inv[k] ? ` <small>· ${inv[k]} dabei</small>` : ''}`, act: () => { if (pay(ITEMS[k].p, pm)) { inv[k] = (inv[k] || 0) + 1; notice(`${ITEMS[k].n} gekauft`, 1100); shopFx(k); } shopMenu(kind); return true; } })),
     { label: `Zahlung: ${pm === 'card' ? '💳 Karte' : '💵 Bar'}`, act: () => { player.payPref = pm === 'card' ? 'cash' : 'card'; shopMenu(kind); return true; } },
     { label: 'Fertig', act: () => false },
   ]));
@@ -2836,7 +3016,7 @@ let stealCd = 0;
 function nearShelf() { const Fc = INT.floors.get(curFloorOf(player.y)); if (!Fc || !['shop', 'market', 'gas'].includes(Fc.kind)) return null; const [lx, lz] = toLocal(player.x, player.z); return Fc.spots.find(sp => sp.type === 'shelf' && Math.hypot(sp.x - lx, sp.z - lz) < 1.6) ? Fc : null; }
 function shoplift() {
   const Fc = nearShelf(); if (!Fc || performance.now() < stealCd) return; stealCd = performance.now() + 1500;
-  const k = pick(SHOP_STOCK[Fc.kind].filter(q => ITEMS[q].p < 100)); (player.inv ||= {})[k] = (player.inv[k] || 0) + 1;
+  const k = pick(SHOP_STOCK[Fc.kind].filter(q => ITEMS[q].p < 100)); (player.inv ||= {})[k] = (player.inv[k] || 0) + 1; player.act = { pose: 'pickup', t: 0.7 }; setTimeout(() => holdItem('item', pick(['#c4161c', '#2fbf4a', '#f2c200']), 1.2), 500);
   const [lx, lz] = toLocal(player.x, player.z), clerk = Fc.npcs.find(n => n.role === 'cashier' && n.state !== 'dead');
   if (clerk && Math.hypot(clerk.x - lx, clerk.z - lz) < 18 && Math.random() < 0.75) {
     notice(`${ITEMS[k].n} geklaut – der Kassierer hat es gesehen!`, 2200);
@@ -2844,12 +3024,47 @@ function shoplift() {
     clerk.pose = 'phone'; clerk.wait = 12; reportCrime('theft', player.x, player.z, 1, true);
   } else notice(`${ITEMS[k].n} eingesteckt – niemand hat es gesehen`, 2000);
 }
+// Gegenstand in der Hand der Spielfigur (Dose, Geld, Tüte, Ware)
+const HELD = { m: null, t: 0 }, litter = [];
+function holdItem(kind, col, secs) {
+  dropHeld(false);
+  const geo = kind === 'can' ? new THREE.CylinderGeometry(0.033, 0.033, 0.12, 12) : kind === 'cash' ? new THREE.BoxGeometry(0.075, 0.025, 0.155) : kind === 'bag' ? new THREE.BoxGeometry(0.26, 0.32, 0.13) : new THREE.BoxGeometry(0.09, 0.14, 0.05);
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: col, roughness: kind === 'can' ? 0.25 : 0.7, metalness: kind === 'can' ? 0.6 : 0 }));
+  const hand = player.h.B.RightHand, ws = hand.getWorldScale(_pv1).x || 1; m.scale.setScalar(1 / ws); m.position.set(0, (kind === 'bag' ? 0.2 : 0.08) / ws, 0.03 / ws); hand.add(m);
+  HELD.m = m; HELD.t = secs; HELD.kind = kind;
+}
+function dropHeld(throwIt) {
+  const m = HELD.m; if (!m) return; HELD.m = null;
+  if (!throwIt) { m.parent?.remove(m); m.geometry.dispose(); return; }
+  m.getWorldPosition(_pv1); m.parent.remove(m); m.scale.setScalar(1); m.position.copy(_pv1); scene.add(m);
+  litter.push({ m, vx: Math.sin(player.yaw) * 3 + rnd(-0.5, 0.5), vy: 2.5, vz: Math.cos(player.yaw) * 3 + rnd(-0.5, 0.5), t: 25, spin: rnd(6, 12) });
+}
+function updateHeld(dt) {
+  if (HELD.m && (HELD.t -= dt) <= 0) dropHeld(HELD.kind === 'can');
+  for (let i = litter.length - 1; i >= 0; i--) {
+    const q = litter[i], m = q.m; q.t -= dt; q.vy -= 12 * dt; m.position.x += q.vx * dt; m.position.y += q.vy * dt; m.position.z += q.vz * dt; m.rotation.x += q.spin * dt;
+    const gy = floorH(m.position.x, m.position.z, m.position.y) + 0.035;
+    if (m.position.y < gy) { m.position.y = gy; q.vy *= -0.35; q.vx *= 0.6; q.vz *= 0.6; q.spin *= 0.5; if (Math.abs(q.vy) > 0.8) sfx.click(); else { q.vy = 0; m.rotation.x = Math.PI / 2; } }
+    if (q.t < 0) { scene.remove(m); m.geometry.dispose(); litter.splice(i, 1); }
+  }
+}
 function nearVend() { return VENDS.find(v => Math.hypot(v.x - player.x, v.z - player.z) < 1.3); }
 function vendMenu(v) {
-  const buy = (k, label) => () => { if (!(pay(1, 'cash') || pay(1, 'card'))) return true; sfx.door(); player.hp = Math.min(100, player.hp + 10); player.act = { pose: 'smoke', t: 1.8 }; notice(`${label} · +10 Gesundheit`, 1300); return false; };
+  player.yaw = Math.atan2(v.x - player.x, v.z - player.z) + Math.PI;
+  const buy = (k, label) => () => {
+    if (!(pay(1, 'cash') || pay(1, 'card'))) return true;
+    const col = k === 'cola' ? '#c4161c' : k === 'sprunk' ? '#2fbf4a' : '#9ad0ff';
+    player.act = { pose: 'press', t: 0.7 }; sfx.click();
+    setTimeout(() => sfx.door(), 350);
+    setTimeout(() => { player.act = { pose: 'pickup', t: 0.6 }; }, 900);
+    setTimeout(() => { holdItem('can', col, 3.4); player.act = { pose: 'smoke', t: 2.6 }; }, 1500);
+    setTimeout(() => { player.hp = Math.min(100, player.hp + 10); notice(`${label} · +10 Gesundheit`, 1300); }, 3200);
+    return false;
+  };
   openMenu(`Getränkeautomat · ${v.brand}`, [{ label: 'Münzen oder Karte · je $1' }, { label: `🥤 ${v.brand} – $1`, act: buy(v.brand === 'eCola' ? 'cola' : 'sprunk', v.brand) }, { label: '💧 Wasser – $1', act: buy('wasser', 'Wasser') }, { label: 'Schließen', act: () => false }]);
 }
 function nearATM() { return ATMS.find(a => Math.hypot(a.x - player.x, a.z - player.z) < 1.6); }
+function faceATM() { const a = nearATM(); if (a && a.bx !== undefined) player.yaw = Math.atan2(a.bx - player.x, a.bz - player.z); }
 
 // ---------- LS Ride: Taxi & Chauffeur (wie Uber) ----------
 const RIDE = {
@@ -2985,6 +3200,7 @@ function playerOut(c) {
 }
 function requestRide(kind, payM = 'card') {
   if (ride) { notice('Es ist bereits eine Fahrt aktiv', 1500); return false; }
+  if (player.jail) { notice('Im Gefängnis gibt es kein LS Ride', 1500); return false; }
   if (wanted > 0) { notice('LS Ride: Keine Fahrer verfügbar – du wirst gesucht', 2000); return false; }
   if (player.car) { notice('Steig zuerst aus dem Fahrzeug aus', 1600); return false; }
   const R0 = RIDE[kind], from = INT.inside && INT.b?.door ? INT.b.door : player, cp = curbPoint(from.x, from.z);
@@ -3151,6 +3367,7 @@ addEventListener('keydown', e => {
   if (e.code === 'Tab') { openWheel(); return; }
   if (e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'KeyC') { if (!player.car) { player.sneak = !player.sneak; notice(player.sneak ? 'Schleichen' : 'Normal', 800); } return; }
   if (e.code === 'KeyE' && !player.dead && !switching) {
+    if (player.jail && jailUse()) return;
     if (INT.inside) interiorUse();
     else if (!player.car && nearATM()) bankMenu('Geldautomat · Fleeca');
     else if (!player.car && nearVend()) vendMenu(nearVend());
@@ -3207,7 +3424,10 @@ const LINES = {
   hq: ['Zentrale: Einheit verlässt die Wache, unterwegs zum Einsatzort.', 'Verstärkung von der Wache ist unterwegs.'],
   redlight: ['Zentrale, Rotlichtverstoß beobachtet. Wir halten das Fahrzeug an.', 'Fahrzeug ist über Rot gefahren, nehmen die Verfolgung auf.'],
   shoplift: ['Hey! Das musst du bezahlen! Ich rufe die Polizei!', 'Haltet den Dieb! Polizei, schnell!'],
-  prison: ['Du bist frei. Lass dich hier nicht wieder blicken!', 'Entlassen. Benimm dich da draußen, verstanden?'],
+  prison: ['Kaution ist bezahlt. Raus hier, und lass dich nicht wieder blicken!', 'Die Tür ist offen. Benimm dich da draußen, verstanden?'],
+  bail: ['In Ordnung, ich komme und schließe auf.', 'Kaution ist eingegangen. Ich bin gleich bei dir.'],
+  guardWarn: ['Hey! Finger weg von dem Gitter!', 'Was machst du da hinten? Lass das!'],
+  breakout: ['Alarm! Häftling aus Bolingbroke ausgebrochen! Alle Einheiten!', 'Zentrale an alle: Ausbruch aus dem Gefängnis, Verdächtiger flüchtig.'],
   surround: ['Verdächtiger ist in ein Gebäude geflüchtet. Wir umstellen den Eingang.', 'Zentrale, Verdächtiger im Gebäude. Wir gehen rein.'],
   enter: ['Einheiten betreten das Gebäude. Durchsuchen Etage für Etage.', 'Wir sind drin. Sichern das Erdgeschoss.'],
   found: ['Da ist er! Stehen bleiben!', 'Polizei! Hände hoch!', 'Hier drüben, ich hab ihn!'],
@@ -3412,7 +3632,8 @@ const sfx = (() => {
     hum(on) { if (!ac) return; if (on && !this._hum) { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'sawtooth'; o.frequency.value = 55; const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 180; g.gain.value = 0.05; o.connect(f).connect(g).connect(master); o.start(); this._hum = o; } else if (!on && this._hum) { this._hum.stop(); this._hum = null; } },
     click() { tone(1800, 0.04, 0.05, 'square'); },
     ring() { for (let i = 0; i < 2; i++) { tone(440, 0.4, 0.07, 'sine', i * 1.1); tone(480, 0.4, 0.07, 'sine', i * 1.1); } },
-    liftBeep() { tone(880, 0.12, 0.1, 'sine'); tone(1320, 0.18, 0.08, 'sine', 0.1); },
+    liftBeep() { tone(1046, 0.09, 0.09, 'square'); tone(1568, 0.14, 0.06, 'sine', 0.09); },
+    liftBeepOld() { tone(880, 0.12, 0.1, 'sine'); tone(1320, 0.18, 0.08, 'sine', 0.1); },
     ding() { tone(1318, 0.6, 0.12, 'sine'); tone(1046, 0.8, 0.1, 'sine', 0.18); },
     save() { [392, 494, 587].forEach((f, i) => tone(f, 0.6, 0.1, 'triangle', i * 0.15)); },
     radio() {
@@ -3468,6 +3689,7 @@ function drawMinimap(camYaw, time) {
     if (l > lim) { dx *= lim / l; dz *= lim / l; }
     mm.fillStyle = '#000'; mm.beginPath(); mm.arc(dx, dz, (r + 3) / zoom, 0, 7); mm.fill(); mm.fillStyle = col; mm.beginPath(); mm.arc(dx, dz, r / zoom, 0, 7); mm.fill();
   };
+  drawRoute(mm, (x, z) => [(x - px) * MS, (z - pz) * MS], 9 / zoom);
   if (waypoint) edge(waypoint.x, waypoint.z, '#b46cff', 10);
   if (meeting && meeting.state === 'wait') edge(meeting.x, meeting.z, meeting.col, 11);
   // Symbole: Häuser & Krankenhaus (aufrecht trotz Kartendrehung)
@@ -3498,7 +3720,8 @@ function updateHUD() {
   if (player.car) $('spv').textContent = Math.round(Math.abs(player.car.speedF || 0) * 3.6);
   $('weapon').textContent = player.car ? (player.car.health < 30 ? '⚠ FAHRZEUG BESCHÄDIGT' : '') : curW().name + (curW().ammo === undefined ? '' : '  ' + (curW().ammo === Infinity ? '∞' : curW().ammo)) + (player.sneak ? '  · SCHLEICHEN' : '') + (scannerOn ? '  · 📻' : '');
   let hint = '';
-  if (!player.car && !player.dead && !switching && !player.ride) {
+  if (player.jail && !player.dead) hint = jailHint();
+  else if (!player.car && !player.dead && !switching && !player.ride) {
     const home = HOMES[CHARS[cur].home];
     if (INT.inside) hint = interiorHint();
     else if (home && Math.hypot(home.x - player.x, home.z - player.z) < 2) hint = 'Drücke <b>E</b>, um zu schlafen und zu speichern';
@@ -3650,6 +3873,46 @@ function setWaypoint(x, z, quiet = false) {
   wpBeam.visible = !!waypoint; if (waypoint) wpBeam.position.set(x, 80, z);
   if (!quiet) notice(waypoint ? 'Wegpunkt gesetzt · ' + districtOf(x, z) : 'Wegpunkt entfernt', 1400);
 }
+let navRoute = null, navT = 0;
+function roadProj(x, z) {
+  const kx = clamp(Math.round(x / P + N / 2), 0, N), kz = clamp(Math.round(z / P + N / 2), 0, N), rx = roadPos(kx), rz = roadPos(kz);
+  const cx = clamp(x, roadPos(0), roadPos(N)), cz = clamp(z, roadPos(0), roadPos(N));
+  return Math.abs(x - rx) < Math.abs(z - rz) ? { x: rx, z: cz, v: true } : { x: cx, z: rz, v: false };
+}
+function computeRoute(sx, sz, tx, tz) {
+  const S = roadProj(sx, sz), D = roadProj(tx, tz), pts = [[sx, sz], [S.x, S.z]];
+  const bestLine = (a, b) => { let best = null; for (let k = 0; k <= N; k++) { const q = roadPos(k), l = Math.abs(a - q) + Math.abs(q - b) + Math.abs(a - q) * 0.01; if (!best || l < best[1]) best = [q, l]; } return best[0]; };
+  if (S.v && D.v) { if (Math.abs(S.x - D.x) > 1) { const q = bestLine(S.z, D.z); pts.push([S.x, q], [D.x, q]); } }
+  else if (!S.v && !D.v) { if (Math.abs(S.z - D.z) > 1) { const q = bestLine(S.x, D.x); pts.push([q, S.z], [q, D.z]); } }
+  else if (S.v) pts.push([S.x, D.z]); else pts.push([D.x, S.z]);
+  pts.push([D.x, D.z], [tx, tz]);
+  return pts.filter((p0, i) => i === 0 || Math.hypot(p0[0] - pts[i - 1][0], p0[1] - pts[i - 1][1]) > 0.5);
+}
+function updateNav(dt) {
+  const el = $('nav'), tgt = waypoint || (meeting && meeting.state === 'wait' ? meeting : null);
+  if (!tgt || INT.inside || player.dead) { navRoute = null; if (el.style.display !== 'none') el.style.display = 'none'; return; }
+  const p = player.car || (player.rideSeat && ride ? ride.car : player);
+  if ((navT -= dt) <= 0 || !navRoute) { navT = 0.5; navRoute = computeRoute(p.x, p.z, tgt.x, tgt.z); }
+  let len = 0; for (let i = 1; i < navRoute.length; i++) len += Math.hypot(navRoute[i][0] - navRoute[i - 1][0], navRoute[i][1] - navRoute[i - 1][1]);
+  // nächste Abbiegung
+  let txt = '';
+  for (let i = 2; i < navRoute.length - 1; i++) {
+    const a = navRoute[i - 1], b = navRoute[i], c = navRoute[i + 1], d1 = [b[0] - a[0], b[1] - a[1]], d2 = [c[0] - b[0], c[1] - b[1]];
+    if (Math.hypot(...d1) < 2 || Math.hypot(...d2) < 2) continue;
+    const cr = d1[0] * d2[1] - d1[1] * d2[0], dist = Math.hypot(b[0] - p.x, b[1] - p.z); if (Math.abs(cr) < 1e-3) continue;
+    txt = `<b>${cr < 0 ? '↰' : '↱'}</b> In ${dist < 1000 ? Math.round(dist / 10) * 10 + ' m' : (dist / 1000).toFixed(1) + ' km'} ${cr < 0 ? 'links' : 'rechts'} abbiegen`; break;
+  }
+  if (!txt) txt = '<b>⬆</b> Dem Straßenverlauf folgen';
+  if (len < 25) txt = '<b>⚑</b> Ziel erreicht';
+  el.innerHTML = `${txt}<small>${len < 1000 ? Math.round(len) + ' m' : (len / 1000).toFixed(1) + ' km'} · ${districtOf(tgt.x, tgt.z)}</small>`;
+  if (el.style.display !== 'block') el.style.display = 'block';
+}
+function drawRoute(ctx, map, lw) {
+  if (!navRoute) return;
+  ctx.save(); ctx.lineJoin = ctx.lineCap = 'round';
+  for (const [col, w] of [['rgba(0,0,0,.75)', lw * 1.9], ['#b46cff', lw]]) { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); navRoute.forEach(([x, z], i) => { const [a, b] = map(x, z); i ? ctx.lineTo(a, b) : ctx.moveTo(a, b); }); ctx.stroke(); }
+  ctx.restore();
+}
 function updateWaypoint() {
   if (!waypoint) return;
   wpBeam.visible = !INT.inside;
@@ -3688,6 +3951,7 @@ function drawBigMap() {
   DISTRICTS.forEach((row, j) => row.forEach((n, i) => { const [a, b] = w2s(-EXT + EXT * 2 * (i + 0.5) / 3, -EXT + EXT * 2 * (j + 0.5) / 3); bmx.strokeText(n.toUpperCase(), a, b); bmx.fillText(n.toUpperCase(), a, b); }));
   for (const [n, x, z] of [['PAZIFIK', -EXT - 90, 0], ['VINEWOOD HILLS', -150, -EXT - 80], ['HAFEN', 260, EXT + 80]]) { const [a, b] = w2s(x, z); bmx.strokeText(n, a, b); bmx.fillText(n, a, b); }
   const dot = (x, z, col, r, sym) => { const [a, b] = w2s(x, z); bmx.fillStyle = '#000'; bmx.beginPath(); bmx.arc(a, b, r + 3, 0, 7); bmx.fill(); bmx.fillStyle = col; bmx.beginPath(); bmx.arc(a, b, r, 0, 7); bmx.fill(); if (sym) { bmx.fillStyle = '#000'; bmx.font = `bold ${r * 1.4}px Arial`; bmx.textBaseline = 'middle'; bmx.fillText(sym, a, b + 1); } };
+  drawRoute(bmx, w2s, 6);
   for (const p of visiblePOIs()) dot(p.x, p.z, p.col, 11, p.sym);
   { bmx.save(); const lx = 18, ly = S - 26 - LEGEND.length * 30; bmx.fillStyle = 'rgba(8,10,14,.72)'; bmx.fillRect(lx - 8, ly - 26, 210, LEGEND.length * 30 + 22);
     bmx.textAlign = 'left'; bmx.textBaseline = 'middle'; LEGEND.forEach(([sy, col, name], k) => { const y = ly + k * 30; bmx.fillStyle = '#000'; bmx.beginPath(); bmx.arc(lx + 12, y, 13, 0, 7); bmx.fill(); bmx.fillStyle = col; bmx.font = 'bold 17px Arial'; bmx.textAlign = 'center'; bmx.fillText(sy, lx + 12, y + 1); bmx.textAlign = 'left'; bmx.fillStyle = '#fff'; bmx.font = 'bold 18px Arial'; bmx.fillText(name, lx + 34, y + 1); }); bmx.restore(); }
@@ -3852,7 +4116,13 @@ function rayBox(o, d, hx, hy, hz) {
 let camYaw = -Math.PI / 2 + 0.5, camPitch = 0.22, camDist = 4.5;
 const camTarget = new THREE.Vector3();
 const headlight = new THREE.SpotLight(0xfff1d6, 0, 70, 0.5, 0.5, 1.2); scene.add(headlight, headlight.target);
+const _pv1 = new THREE.Vector3(), _pv2 = new THREE.Vector3(), _pv3 = new THREE.Vector3();
 function updateCamera(dt) {
+  if (INT.panelMode && INT.cab) {
+    const Pn = INT.cab.panel; Pn.updateMatrixWorld(); Pn.getWorldPosition(_pv1); _pv2.set(0, 0, 1).transformDirection(Pn.matrixWorld);
+    _pv3.copy(_pv1).addScaledVector(_pv2, 0.62); _pv3.y += 0.05; if (camera.position.distanceTo(_pv3) > 2.5) camera.position.copy(_pv3); else camera.position.lerp(_pv3, Math.min(1, dt * 7)); camera.lookAt(_pv1);
+    camera.fov = lerp(camera.fov, 52, Math.min(1, dt * 6)); camera.updateProjectionMatrix(); skyDome.position.copy(camera.position); mouseDX = mouseDY = 0; return;
+  }
   if (switching) {
     // Charakterwechsel wie in GTA V: hoch in den Himmel, rüber, runter
     const s = switching, up = s.t < 1.3 ? smooth(0, 1, s.t / 1.3) : 1 - smooth(0, 1, (s.t - 1.3) / 1.3);
@@ -3913,6 +4183,7 @@ function updatePlayer(dt, raw) {
     if (player.rideSeat && ride) { const c = ride.car, [lx, ly, lz] = paxLocal(c), [x, z] = carLocal(c, lx, lz); player.x = x; player.z = z; player.y = c.y + ly; player.yaw = c.yaw; animHuman(player.h, 0, dt, false, 'sit'); }
     return;
   }
+  if (player.rag) { updateRag(dt); return; }
   if (player.car) {
     const c = player.car;
     const thr = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
@@ -3941,7 +4212,11 @@ function updatePlayer(dt, raw) {
   const aiming = (rmb || lmb) && !curW().melee && !phone.open;
   const spd = ml > 0 ? player.sneak ? 1.7 : (keys.ShiftLeft || keys.ShiftRight) && !aiming ? 7.6 : aiming ? 2.6 : 4.2 : 0;
   if (ml > 0) { mx /= ml; mz /= ml; }
-  player.vx = lerp(player.vx, mx * spd, Math.min(1, dt * 10)); player.vz = lerp(player.vz, mz * spd, Math.min(1, dt * 10));
+  // Trägheit: beschleunigen/abbremsen mit begrenzter Rate, Sprint kostet Ausdauer
+  const sprinting = spd > 7 && ml > 0; player.stam = clamp((player.stam ?? 100) + (sprinting ? -13 : 9) * dt, 0, 100);
+  const spdE = sprinting && player.stam < 3 ? 4.6 : spd, accR = ml > 0 ? (spdE > 5 ? 9 : 14) : 16;
+  const dvx = mx * spdE - player.vx, dvz = mz * spdE - player.vz, dl = Math.hypot(dvx, dvz), lim = accR * dt;
+  if (dl > lim) { player.vx += dvx / dl * lim; player.vz += dvz / dl * lim; } else { player.vx += dvx; player.vz += dvz; }
   player.x += player.vx * dt; player.z += player.vz * dt;
   const r = resolveCircle(player.x, player.z, 0.38, player.y + 0.9); player.x = r.x; player.z = r.z;
   for (const c of cars) {
@@ -3951,8 +4226,18 @@ function updatePlayer(dt, raw) {
       if (d < 1.35 && d > 0.01) {
         player.x = cx + dx / d * 1.35; player.z = cz + dz / d * 1.35;
         const cs = Math.hypot(c.vx, c.vz) + (c.mode === 'ai' ? c.ai.speed : 0);
-        if (cs > 6) { hurtPlayer(cs * 1.5); player.vx += dx / d * cs; player.vz += dz / d * cs; }
+        if (cs > 5) { const cvx = c.mode === 'ai' ? Math.sin(c.yaw) * c.ai.speed : c.vx, cvz = c.mode === 'ai' ? Math.cos(c.yaw) * c.ai.speed : c.vz; knockPlayer(cvx * 0.8 + dx / d * 2, 2 + cs * 0.18, cvz * 0.8 + dz / d * 2, cs * 1.4); return; }
       }
+    }
+  }
+  // Anrempeln: Passanten werden weggeschoben, bei Sprint stolpern sie und fallen
+  for (const p of peds) {
+    if (p.state === 'dead' || p.state === 'fly' || p.state === 'entering') continue;
+    const ex = p.x - player.x, ez = p.z - player.z, ed = Math.hypot(ex, ez);
+    if (ed < 0.62 && ed > 0.01) {
+      const ps = Math.hypot(player.vx, player.vz); p.x += ex / ed * (0.62 - ed); p.z += ez / ed * (0.62 - ed);
+      if (ps > 5.5) { launchPed(p, { vx: player.vx * 0.5, vz: player.vz * 0.5 }); p.impact = 2; player.vx *= 0.55; player.vz *= 0.55; shake = Math.max(shake, 0.15); sfx.hit(); }
+      if (ps > 1 && performance.now() > (p.bumpCd || 0)) { p.bumpCd = performance.now() + 4000; say(pick(LINES.bump), { who: 'Passant', voice: p.voice, rate: p.vrate, h: p.h }); }
     }
   }
   if (aiming) { player.aimT = 0.8; player.yaw = camYaw; }
@@ -3961,7 +4246,7 @@ function updatePlayer(dt, raw) {
   const g = floorH(player.x, player.z, player.y);
   if (keys.Space && player.grounded) { player.vy = 5.4; player.grounded = false; }
   player.vy -= 15 * dt; player.y += player.vy * dt;
-  if (player.y <= g) { player.y = player.grounded ? lerp(player.y, g, Math.min(1, dt * 20)) : g; player.vy = 0; player.grounded = true; }
+  if (player.y <= g) { const impactV = player.vy; player.y = player.grounded ? lerp(player.y, g, Math.min(1, dt * 20)) : g; player.vy = 0; player.grounded = true; if (impactV < -10.5) { knockPlayer(player.vx * 0.4, 0.5, player.vz * 0.4, (-impactV - 10) * 7); return; } }
   if (player.grounded && player.y < g) player.y = g;
   if (player.grounded && INT.inside && Math.abs(player.y - g) < 0.6) player.y = g;
   const w = curW();
@@ -3972,7 +4257,7 @@ function updatePlayer(dt, raw) {
   const gw = curW().gun, aimNow = player.aimT > 0 && !!gw;
   if (player.act && (player.act.t -= dt) <= 0) player.act = null;
   const mv = Math.hypot(player.vx, player.vz);
-  animHuman(h, mv, dt, aimNow, phone.open ? 'phone' : player.act && mv < 0.5 ? player.act.pose : null, player.sneak);
+  animHuman(h, mv, dt, aimNow, phone.open ? 'phone' : player.act && mv < 0.5 ? player.act.pose : uiMenu?.pose && mv < 0.5 ? uiMenu.pose : null, player.sneak);
   if (aimNow) aimPose(h, camPitch);
   h.gun.visible = aimNow; if (gw) { h.gunBase ??= h.gun.scale.x; h.gun.scale.set(gw[0] * h.gunBase, gw[1] * h.gunBase, gw[2] * h.gunBase); }
   if (player.punchT > 0) { player.punchT -= dt; punchPose(h, Math.sin((1 - player.punchT / 0.25) * Math.PI)); }
@@ -4155,11 +4440,11 @@ function simulate(dt, raw, raw0, time) {
   if (switching) updateSwitch(raw); else updatePlayer(dt, raw);
   updateBuildings(dt);
   updateIdleChars(dt);
-  updateCars(dt, time); updateRide(dt); updateSquad(dt); updatePrison(dt);
+  updateCars(dt, time); updateRide(dt); updateSquad(dt); updatePrison(dt); updateHeld(dt);
   updatePeds(dt);
   updatePickups(dt, time);
   updateWanted(dt); updateCrimeCalls(dt);
-  updateGrenades(dt); updateScanner(dt); updateMeeting(dt); updateWaypoint();
+  updateGrenades(dt); updateScanner(dt); updateMeeting(dt); updateWaypoint(); updateNav(dt);
   for (let i = tracers.length - 1; i >= 0; i--) { if ((tracers[i].t -= dt) < 0) { scene.remove(tracers[i].m); tracers.splice(i, 1); } }
   flash.intensity = Math.max(0, flash.intensity - dt * 600);
   const hm = HOMES[CHARS[cur].home]; if (hm) { hm.marker.scale.y = 1 + Math.sin(time * 3) * 0.15; hm.marker.material.opacity = 0.3 + Math.sin(time * 3) * 0.1; }
@@ -4168,7 +4453,7 @@ function simulate(dt, raw, raw0, time) {
   if (fpsT > 4) {
     const fps = fpsN / fpsT; fpsT = 0; fpsN = 0;
     if (fps < 30 && qIdx > 0) { qIdx--; qCeil = qIdx; applySize(); notice('Auflösung automatisch angepasst: ' + QUALITY[qIdx][0], 2200); }
-    else if (fps > 58 && qIdx < Math.min(qCeil, 2) && performance.now() - lastQUp > 15000) { qIdx++; lastQUp = performance.now(); applySize(); }
+    else if (fps > 55 && qIdx < Math.min(qCeil, 2) && performance.now() - lastQUp > 15000) { qIdx++; lastQUp = performance.now(); applySize(); }
   }
 }
 function frame() {
@@ -4227,7 +4512,7 @@ async function boot() {
   for (let i = 0; i < 18; i++) spawnParked(15, 230);
   for (let i = 0; i < 50; i++) spawnPed(6, 130);
   worldReady = true;
-  window.__game = { deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get phone() { return phone; } };
+  window.__game = { deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, knockPlayer, jailReset, get navRoute() { return navRoute; }, holdItem, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get phone() { return phone; } };
   progress(0.9, CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase() + ' wird geweckt …'); await nextFrame();
   progress(0.95, 'Shader werden kompiliert …'); await nextFrame();
   updateCamera(0.016);

@@ -73,6 +73,8 @@
   #elev .btns i.sel { outline: .35vmin solid #ffd23a; outline-offset: .2vmin; }
   #elev .btns i.lit { transform: scale(.88); color: #fff; background: radial-gradient(circle at 40% 35%, #fff6d0, #ffb020 60%, #c06a00); box-shadow: 0 0 2.4vmin #ffb020, inset 0 .3vmin .5vmin rgba(0,0,0,.35); animation: litpulse .65s ease-out; }
   @keyframes litpulse { 0% { transform: scale(.8); } 40% { transform: scale(.92); } 100% { transform: scale(.88); } }
+  #nav { position: absolute; left: 50%; top: 2.2vmin; transform: translateX(-50%); display: none; background: rgba(12,10,20,.82); border-left: .6vmin solid #b46cff; border-radius: .8vmin; padding: .9vmin 2.2vmin; font-size: 2.3vmin; font-weight: 700; color: #fff; white-space: nowrap; box-shadow: 0 .6vmin 2vmin rgba(0,0,0,.45); }
+  #nav b { color: #c99bff; font-size: 3vmin; margin-right: 1vmin; vertical-align: middle; } #nav small { display: block; color: #b8b2c8; font-weight: 600; font-size: 1.6vmin; margin-top: .2vmin; }
   #lifthud { position: absolute; left: 50%; top: 14vmin; transform: translateX(-50%); display: none; text-align: center; background: rgba(5,6,7,.82); border: .3vmin solid #3a3f45; border-radius: 1.2vmin; padding: 1vmin 3vmin; font-family: 'Courier New', monospace; color: #ff9a2a; text-shadow: 0 0 1vmin #ff7a00; }
   #lifthud span { display: block; font-size: 5vmin; font-weight: 700; } #lifthud small { display: block; color: #cfd6dd; text-shadow: none; font-family: Arial, sans-serif; font-size: 1.6vmin; }
   #elev .eh { margin-top: 1vmin; font-size: 1.6vmin; color: #9aa3ad; }
@@ -124,6 +126,7 @@
   <div id="notice"></div>
   <div id="fare"></div>
   <div id="lifthud"></div>
+  <div id="nav"></div>
   <div id="who">FRANKLIN</div>
   <div id="mapwrap"><canvas id="minimap" width="520" height="400"></canvas></div>
   <div id="healthwrap"><div class="bar" id="ar"><i></i></div><div class="bar" id="hp"><i></i></div></div>

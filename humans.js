@@ -108,6 +108,9 @@ const POSES = {
   cook(h, t) { armsForward(h, 75, 60, 60, Math.sin(t * 4) * 8); rot(h.B.Head, 20, 0, 0); },
   browse(h, t) { rot(h.B.Head, 8, Math.sin(t * 0.6) * 30, 0); },
   look(h, t) { rot(h.B.Head, 0, Math.sin(t * 0.5) * 35, 0); },
+  press(h) { const B = h.B; rot(B.RightArm, 70, 0, -35); rot(B.RightForeArm, -35, 0, 0); rot(B.RightHand, -20, 0, 0); },
+  pickup(h, t) { const B = h.B; rot(B.Spine, 28, 0, 0); rot(B.Spine1, 12, 0, 0); rot(B.RightArm, 55, 0, -50); rot(B.RightForeArm, -25, 0, 0); rot(B.LeftUpLeg, -25, 0, 0); rot(B.RightUpLeg, -25, 0, 0); rot(B.LeftLeg, 35, 0, 0); rot(B.RightLeg, 35, 0, 0); h.body.position.y = -0.12; },
+  atm(h, t) { armsForward(h, 70, 52, 75, Math.sin(t * 11) * 5); rot(h.B.Head, 12, 0, 0); },
   talk(h, t) { rot(h.B.Head, 0, Math.sin(t * 0.8) * 12, 0); rot(h.B.RightForeArm, -20 - Math.max(0, Math.sin(t * 2.3)) * 35, 0, 0); },
   stand(h, t) { rot(h.B.Spine, Math.sin(t * 1.5) * 1.2, 0, 0); rot(h.B.Head, 0, Math.sin(t * 0.45 + (h.seedT ??= Math.random() * 40)) * 25, 0); },
 };
