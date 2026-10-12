@@ -1,0 +1,6 @@
+Produkt-Modelle (Supermarkt/Tankstelle), Quelle: https://github.com/KhronosGroup/glTF-Sample-Assets (Models/<Name>)
+- Avocado.glb         (c) 2017 Microsoft, CC0 1.0 Universal. Mit gltf-transform optimiert (webp 512, meshopt).
+- BarramundiFish.glb  (c) 2017 Microsoft, CC0 1.0 Universal. Mit gltf-transform optimiert (webp 512, meshopt).
+- MandarinOrange.glb  (c) 2015 zamdreamer (Photogrammetrie-Original, Sketchfab), CC BY 4.0; glTF-PBR-Material (c) 2023 Wayfair / Eric Chadwick, CC BY 4.0.
+                      Mit gltf-transform vereinfacht (~1,2k Dreiecke), webp 512, meshopt. Nur als geschälte Mandarine als Deko-Akzent verwendet.
+- WaterBottleLow.glb  Vereinfachte Ableitung (~420 Dreiecke) von WaterBottle.glb, (c) 2017 Microsoft, CC0 1.0 Universal.

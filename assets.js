@@ -17,7 +17,7 @@ async function fetchBin(url) {
 }
 const loadImg = src => new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; });
 
-const MODELS = ['ferrari', 'CarConcept', 'CommercialRefrigerator', 'TrafficCone', 'SheenChair', 'SheenWoodLeatherSofa', 'DiffuseTransmissionPlant', 'WaterBottle', 'Avocado', 'MandarinOrange', 'BarramundiFish'];
+const MODELS = ['ferrari', 'CarConcept', 'CommercialRefrigerator', 'TrafficCone', 'SheenChair', 'SheenWoodLeatherSofa', 'DiffuseTransmissionPlant', 'WaterBottle', 'WaterBottleLow', 'Avocado', 'MandarinOrange', 'BarramundiFish'];
 const IMAGES = ['brick_diffuse', 'brick_bump', 'brick_roughness', 'hardwood2_diffuse', 'hardwood2_bump', 'hardwood2_roughness', 'Water_1_M_Normal'];
 
 export async function loadAssets(base, onProgress) {

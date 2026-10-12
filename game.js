@@ -158,6 +158,7 @@ function makeFacade(id) {
   });
   const orm = canvasTex(S, S, c => {
     c.fillStyle = id === 'glass' ? 'rgb(255,105,40)' : 'rgb(255,230,0)'; c.fillRect(0, 0, S, S);
+    if (id === 'brick' && ASSETS.img.brick_roughness) { c.save(); c.scale(0.42, 0.42); c.fillStyle = c.createPattern(ASSETS.img.brick_roughness, 'repeat'); c.fillRect(0, 0, S / 0.42, S / 0.42); c.restore(); c.globalCompositeOperation = 'multiply'; c.fillStyle = 'rgb(255,255,0)'; c.fillRect(0, 0, S, S); c.globalCompositeOperation = 'source-over'; }
     eachWin((x, y, w, h) => { c.fillStyle = 'rgb(255,20,0)'; c.fillRect(x, y, w, h); }); // Fenster: Dielektrikum (metalness 0), roughness ~0.08
   }, false);
   return new THREE.MeshStandardMaterial({ map: color, emissiveMap: emis, emissive: 0xffffff, emissiveIntensity: 0, roughnessMap: orm, metalnessMap: orm, roughness: 1, metalness: 1, vertexColors: true });
@@ -203,6 +204,8 @@ const M = {};
 function makeMaterials() {
   M.facades = {}; for (const id in FSTYLES) M.facades[id] = makeFacade(id);
   M.facade = M.facades.classic;
+  M.facades.f3 = makeFrame3D(); M.facades.g3 = makeGlass3D(); // Rahmen/Glas der instanzierten 3D-Fenstermodule (erben Stencil-Portal und Umgebung)
+  if (ASSETS.img.brick_diffuse && ASSETS.img.brick_bump) { M.facades.brick.bumpMap = photoTex('brick_bump', 1024 / (ASSETS.img.brick_diffuse.width * 0.42), false); M.facades.brick.bumpScale = 1.5; }
   M.palm = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.85 });
   M.vcol = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
   M.ivcol = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
@@ -444,7 +447,7 @@ function checkRedLight(c) {
   if (!inBox) { player.rlKey = -1; return; }
   if (player.rlKey === key) return; player.rlKey = key;
   if (Math.hypot(c.vx, c.vz) < 4 || sigState(kx, kz, Math.abs(c.vx) > Math.abs(c.vz) ? 'x' : 'z') !== 'red') return;
-  const cop = cars.some(o => o.cop && o !== c && o.mode !== 'wreck' && Math.hypot(o.x - c.x, o.z - c.z) < 70 && lineOfSight(o.x, o.z, c.x, c.z)) || officers.some(o => o.state !== 'dead' && Math.hypot(o.x - c.x, o.z - c.z) < 40);
+  const cop = cars.some(o => o.cop && o !== c && o.mode !== 'wreck' && Math.hypot(o.x - c.x, o.z - c.z) < 70 && lineOfSight(o.x, o.z, c.x, c.z)) || officers.some(o => o.state !== 'dead' && Math.hypot(o.x - c.x, o.z - c.z) < 40 && lineOfSight(o.x, o.z, c.x, c.z));
   if (cop && wanted === 0) { addWanted(1); notice('ÜBER ROT GEFAHREN – DIE POLIZEI HAT ES GESEHEN', 2600); setTimeout(() => say(pick(LINES.redlight), { who: 'Polizeifunk', radio: true, color: '#6fa8ff', prio: true }), 900); }
   else if (!cop) notice('Über Rot gefahren', 1200);
 }
@@ -707,13 +710,334 @@ function deformLocal(c, cx, cz, depth) {
   }
   pos.needsUpdate = true; c.paintMesh.geometry.computeBoundingSphere();
 }
+// ---------- 3D-Fassaden: Fenstermodule, Balkone, Gesimse, Dachaufbauten ----------
+// Wiederholte Module (Fenster, Balkone, Gesimse) sind globale InstancedMeshes, die nur für Fassaden nahe der Kamera
+// gefüllt werden (Distanz-LOD + Blickrichtung); ferne Gebäude behalten die gemalte Textur. Statische Details
+// (Sockel, Gesimse, Brüstungen, Dachaufbauten) werden pro Chunk zu einem Mesh verschmolzen.
+const lc = hex => new THREE.Color(hex).toArray();
+class GB { // kleiner Geometrie-Builder (Quader, Zylinder, Bögen) mit Vertexfarben; Winkel der Quads werden automatisch ausgerichtet
+  constructor() { this.p = []; this.n = []; this.c = []; this.i = []; }
+  quad(a, b, c, d, nrm, col) {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    if ((uy * vz - uz * vy) * nrm[0] + (uz * vx - ux * vz) * nrm[1] + (ux * vy - uy * vx) * nrm[2] < 0) [b, d] = [d, b];
+    const o = this.p.length / 3, k3 = typeof col === 'number' ? [col, col, col] : col;
+    this.p.push(...a, ...b, ...c, ...d);
+    for (let k = 0; k < 4; k++) { this.n.push(nrm[0], nrm[1], nrm[2]); this.c.push(k3[0], k3[1], k3[2]); }
+    this.i.push(o, o + 1, o + 2, o, o + 2, o + 3);
+  }
+  tri(a, b, c, nrm, col) {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    if ((uy * vz - uz * vy) * nrm[0] + (uz * vx - ux * vz) * nrm[1] + (ux * vy - uy * vx) * nrm[2] < 0) [b, c] = [c, b];
+    const o = this.p.length / 3, k3 = typeof col === 'number' ? [col, col, col] : col;
+    this.p.push(...a, ...b, ...c);
+    for (let k = 0; k < 3; k++) { this.n.push(nrm[0], nrm[1], nrm[2]); this.c.push(k3[0], k3[1], k3[2]); }
+    this.i.push(o, o + 1, o + 2);
+  }
+  box(x0, x1, y0, y1, z0, z1, col = 1, skip = 32) { // skip-Bits: 1 +x, 2 -x, 4 +y, 8 -y, 16 +z, 32 -z
+    if (!(skip & 1)) this.quad([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1], [1, 0, 0], col);
+    if (!(skip & 2)) this.quad([x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1], [-1, 0, 0], col);
+    if (!(skip & 4)) this.quad([x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], [0, 1, 0], col);
+    if (!(skip & 8)) this.quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [0, -1, 0], col);
+    if (!(skip & 16)) this.quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1], col);
+    if (!(skip & 32)) this.quad([x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [0, 0, -1], col);
+  }
+  cyl(cx, cz, y0, y1, r, seg, col, rt = r) { // stehender Zylinder/Kegel
+    for (let k = 0; k < seg; k++) {
+      const a0 = k / seg * 6.2832, a1 = (k + 1) / seg * 6.2832, am = (a0 + a1) / 2, c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+      const q0 = [cx + c0 * rt, y1, cz + s0 * rt], q1 = [cx + c1 * rt, y1, cz + s1 * rt];
+      this.quad([cx + c0 * r, y0, cz + s0 * r], [cx + c1 * r, y0, cz + s1 * r], q1, q0, [Math.cos(am), (r - rt) / (y1 - y0), Math.sin(am)], col);
+      if (rt > 0) this.tri([cx, y1, cz], q1, q0, [0, 1, 0], col);
+    }
+  }
+  arch(cx, cy, r0, r1, z0, z1, seg, col) { // Halbring (Rundbogen) in der xy-Ebene
+    for (let k = 0; k < seg; k++) {
+      const a0 = Math.PI * k / seg, a1 = Math.PI * (k + 1) / seg, am = (a0 + a1) / 2, P = (a, r, z) => [cx + Math.cos(a) * r, cy + Math.sin(a) * r, z];
+      this.quad(P(a0, r0, z1), P(a0, r1, z1), P(a1, r1, z1), P(a1, r0, z1), [0, 0, 1], col);
+      this.quad(P(a0, r1, z0), P(a0, r1, z1), P(a1, r1, z1), P(a1, r1, z0), [Math.cos(am), Math.sin(am), 0], col);
+      this.quad(P(a0, r0, z0), P(a0, r0, z1), P(a1, r0, z1), P(a1, r0, z0), [-Math.cos(am), -Math.sin(am), 0], col);
+    }
+  }
+  halfDisc(cx, cy, r, z, seg, col) { for (let k = 0; k < seg; k++) { const a0 = Math.PI * k / seg, a1 = Math.PI * (k + 1) / seg; this.tri([cx, cy, z], [cx + Math.cos(a0) * r, cy + Math.sin(a0) * r, z], [cx + Math.cos(a1) * r, cy + Math.sin(a1) * r, z], [0, 0, 1], col); } }
+  hip(cx, cz, y0, w, d, hgt, ins, col) { // Walmdach (Pyramidenstumpf)
+    const hw = w / 2, hd = d / 2, tw = Math.max(0.1, hw - ins), td = Math.max(0.1, hd - ins), y1 = y0 + hgt;
+    const A = [[-hw, y0, -hd], [hw, y0, -hd], [hw, y0, hd], [-hw, y0, hd]].map(p => [cx + p[0], p[1], cz + p[2]]), Bq = [[-tw, y1, -td], [tw, y1, -td], [tw, y1, td], [-tw, y1, td]].map(p => [cx + p[0], p[1], cz + p[2]]);
+    const nrm = [[0, ins / hgt, -1], [1, ins / hgt, 0], [0, ins / hgt, 1], [-1, ins / hgt, 0]];
+    for (let k = 0; k < 4; k++) { const k2 = (k + 1) % 4, s = k % 2 ? 0.88 : 1; this.quad(A[k], A[k2], Bq[k2], Bq[k], nrm[k], [col[0] * s, col[1] * s, col[2] * s]); }
+    this.quad(Bq[0], Bq[1], Bq[2], Bq[3], [0, 1, 0], col);
+  }
+  geo() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.p), 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(this.n), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.c), 3));
+    g.setIndex(this.i.length > 65535 ? new THREE.Uint32BufferAttribute(this.i, 1) : new THREE.Uint16BufferAttribute(this.i, 1));
+    return g;
+  }
+}
+const bayN = (len, st) => Math.max(1, Math.round(len / (st.TW / st.bays))); // Fensterachsen je Wand (gemalte Kacheln werden darauf gestreckt)
+
+// Modulgeometrien: lokal x = entlang der Wand, y = hoch ab Geschossboden, z = aus der Wand heraus
+function buildModGeos() {
+  const G = {}, mk = fn => { const g = new GB(); fn(g); return g.geo(); };
+  G.wClassic = mk(g => { // Steingewände, Sturz mit Verdachung, Sohlbank, Sprossenkreuz
+    g.box(-1.42, -1.19, 0.66, 3.08, 0, 0.13, 0.95); g.box(1.19, 1.42, 0.66, 3.08, 0, 0.13, 0.95);
+    g.box(-1.5, 1.5, 2.94, 3.2, 0, 0.2, 1); g.box(-1.62, 1.62, 3.2, 3.34, 0, 0.3, 0.9);
+    g.box(-1.55, 1.55, 0.6, 0.79, 0, 0.3, 1); g.box(-1.25, 1.25, 0.45, 0.6, 0, 0.18, 0.8);
+    g.box(-0.04, 0.04, 0.79, 2.94, 0, 0.07, 0.3); g.box(-1.19, 1.19, 1.95, 2.01, 0, 0.07, 0.3);
+  });
+  const brickBase = g => { g.box(-1.0, -0.78, 0.7, 2.9, 0, 0.1, 0.95); g.box(1.0 - 0.22, 1.0, 0.7, 2.9, 0, 0.1, 0.95); g.box(-1.1, 1.1, 0.66, 0.86, 0, 0.27, 1); g.box(-0.03, 0.03, 0.86, 2.86, 0, 0.06, 0.3); g.box(-0.78, 0.78, 1.7, 1.75, 0, 0.06, 0.3); };
+  G.wBrick = mk(g => { brickBase(g); g.box(-1.06, 1.06, 2.86, 3.1, 0, 0.15, 1); g.box(-0.13, 0.13, 2.86, 3.24, 0, 0.21, 0.92); });
+  G.wArch = mk(g => { brickBase(g); g.arch(0, 2.86, 0.78, 1.0, 0, 0.14, 8, 1); g.halfDisc(0, 2.86, 0.78, 0.01, 8, 0.1); g.box(-0.12, 0.12, 3.6, 3.94, 0, 0.2, 0.92); });
+  G.wStucco = mk(g => { // Fensterläden, Sohlbank mit Blumenkasten
+    for (const s of [-1, 1]) {
+      g.box(Math.min(s * 0.83, s * 1.45), Math.max(s * 0.83, s * 1.45), 0.9, 2.8, 0, 0.05, 0.95);
+      for (const y of [1.3, 1.85]) g.box(Math.min(s * 0.87, s * 1.41), Math.max(s * 0.87, s * 1.41), y, y + 0.07, 0.05, 0.09, 0.7);
+    }
+    g.box(-0.9, 0.9, 0.8, 0.94, 0, 0.28, 1); g.box(-0.85, 0.85, 0.94, 1.2, 0.05, 0.3, 0.55);
+    g.box(-0.85, 0.85, 2.74, 2.84, 0, 0.1, 1); g.box(-0.85, -0.77, 0.94, 2.74, 0, 0.09, 1); g.box(0.77, 0.85, 0.94, 2.74, 0, 0.09, 1); g.box(-0.03, 0.03, 0.94, 2.74, 0, 0.08, 1);
+  });
+  G.wConc = mk(g => { // Sichtbeton: tiefe Laibung, Brüstungsband, Fensterstege
+    g.box(-1.75, 1.75, 2.73, 3.1, 0, 0.45, 1); g.box(-1.75, 1.75, 0.95, 1.22, 0, 0.35, 0.95);
+    g.box(-1.75, -1.69, 1.22, 2.73, 0, 0.14, 0.9); g.box(1.69, 1.75, 1.22, 2.73, 0, 0.14, 0.9); g.box(-0.05, 0.05, 1.22, 2.73, 0, 0.1, 0.4);
+  });
+  G.curt = mk(g => { // Vorhangfassade: Pfosten, Brüstungspaneel, Riegel
+    g.box(-1.5, -1.44, 0, 3.6, 0, 0.2, 1); g.box(1.44, 1.5, 0, 3.6, 0, 0.2, 1);
+    g.box(-1.44, 1.44, 0, 0.34, 0, 0.1, 0.45); g.box(-1.44, 1.44, 3.5, 3.6, 0, 0.14, 0.9);
+  });
+  G.shop = mk(g => { // Schaufenster: Sockel, Pfosten, Blende
+    g.box(-1.75, 1.75, 0, 0.4, 0, 0.1, 0.6); g.box(-1.75, 1.75, 2.9, 3.3, 0, 0.18, 0.9);
+    g.box(-1.75, -1.62, 0.4, 2.9, 0, 0.14, 1); g.box(1.62, 1.75, 0.4, 2.9, 0, 0.14, 1); g.box(-0.04, 0.04, 0.4, 2.9, 0, 0.1, 1); g.box(-1.62, 1.62, 2.0, 2.06, 0, 0.08, 1);
+  });
+  G.awn = mk(g => { // gestreifte Markise (Streifen = helle/dunkle Tönung der Instanzfarbe)
+    const n = 8, w = 3.4 / n;
+    for (let k = 0; k < n; k++) {
+      const x0 = -1.7 + k * w, x1 = x0 + w, s = k % 2 ? 0.5 : 1;
+      g.quad([x0, 3.4, 0.04], [x1, 3.4, 0.04], [x1, 2.9, 1.1], [x0, 2.9, 1.1], [0, 0.9, 0.45], s); g.quad([x0, 3.4, 0.04], [x1, 3.4, 0.04], [x1, 2.9, 1.1], [x0, 2.9, 1.1], [0, -0.9, -0.45], s * 0.5);
+      g.quad([x0, 2.9, 1.1], [x1, 2.9, 1.1], [x1, 2.68, 1.1], [x0, 2.68, 1.1], [0, 0, 1], s);
+    }
+  });
+  G.balc = mk(g => { // Balkon: Platte, Geländer mit Stäben
+    g.box(-1.45, 1.45, 0, 0.14, 0, 1.25, 1); g.box(-1.45, 1.45, 1.0, 1.06, 1.2, 1.27, 0.3);
+    for (const s of [-1, 1]) g.box(s * 1.45 - 0.03, s * 1.45 + 0.03, 1.0, 1.06, 0, 1.27, 0.3);
+    for (let k = 0; k < 8; k++) { const x = -1.42 + k * 0.405; g.box(x, x + 0.035, 0.14, 1.0, 1.22, 1.255, 0.3); }
+    for (const s of [-1, 1]) for (const z of [0.45, 0.9]) g.box(s * 1.45 - 0.0175, s * 1.45 + 0.0175, 0.14, 1.0, z, z + 0.035, 0.3);
+  });
+  G.balcLo = mk(g => { g.box(-1.45, 1.45, 0, 0.14, 0, 1.25, 1); g.box(-1.45, 1.45, 0.14, 1.06, 1.2, 1.27, 0.35); });
+  G.bar = mk(g => g.box(-0.5, 0.5, 0, 1, 0, 1, 1));
+  G.ring = mk(g => { g.box(-0.5, 0.5, 0.94, 1, 0, 0.1, 1); g.box(-0.5, 0.5, 0, 0.06, 0, 0.1, 1); g.box(-0.5, -0.44, 0.06, 0.94, 0, 0.1, 1); g.box(0.44, 0.5, 0.06, 0.94, 0, 0.1, 1); });
+  const gl = new THREE.PlaneGeometry(1, 1); gl.translate(0, 0.5, 0); G.glass = gl;
+  return G;
+}
+// Glas der Fenstermodule (gw/gh/gy = Scheibe in Metern über Geschossboden, deckungsgleich mit dem gemalten Fenster, nom = Rasterbreite, pad = Rahmenzugabe LOD 1)
+const K3 = {
+  wClassic: { gw: 2.38, gh: 2.16, gy: 0.79, nom: 3.5, pad: 0.35, refl: 0.15 },
+  wBrick: { gw: 1.56, gh: 2.0, gy: 0.86, nom: 3.0, pad: 0.3, refl: 0.15 },
+  wArch: { gw: 1.56, gh: 2.0, gy: 0.86, nom: 3.0, pad: 0.3, refl: 0.15 },
+  wStucco: { gw: 1.54, gh: 1.8, gy: 0.94, nom: 3.5, pad: 0.3, refl: 0.1 },
+  wConc: { gw: 3.5, gh: 1.51, gy: 1.22, nom: 3.5, pad: 0.4, refl: 0.3 },
+  curt: { gw: 2.88, gh: 3.27, gy: 0.3, nom: 3.0, pad: 0.05, refl: 1 },
+  shop: { gw: 3.2, gh: 2.5, gy: 0.4, nom: 3.5, pad: 0.2, refl: 0.35 },
+  awn: { nom: 3.5 }, balc: { nom: 1 }, bar: { nom: 1 },
+};
+const ST3 = { // Stil -> Modul, Module je Achse, Zierleisten, Tönungen der Rahmen
+  classic: { kind: 'wClassic', mods: 1, ledge: [0.2, 0.12], pil: [0.6, 0.18], tints: ['#e8e2d4', '#d8d2c4', '#cfc8b8', '#efe9dd'] },
+  glass: { kind: 'curt', mods: 1, tints: ['#2b3036', '#4a525a', '#8a9096', '#1c2025'] },
+  brick: { kind: 'wBrick', mods: 1, tints: ['#e6dcc8', '#d9ccb4', '#efe6d4'] },
+  stucco: { kind: 'wStucco', mods: 1, tints: ['#2f5a3a', '#2b4c6e', '#6b3f2a', '#8a2b2b', '#f0ece4', '#3d6b66'] },
+  concrete: { kind: 'wConc', mods: 2, ledge: [0.5, 0.35], pil: [0.5, 0.3], tints: ['#b8b8b2', '#a8aaa8', '#c4c2ba'] },
+};
+const FACES = [], SIGNS = [], SIGN_ROWS = [['BÄCKEREI', '#7a2e1d', '#ffe9c0'], ['APOTHEKE', '#0c6b3a', '#ffffff'], ['CAFÉ BRASIL', '#2b1d14', '#ffd9a0'], ['LS KIOSK', '#144a8a', '#ffffff'], ['MODE & STIL', '#161616', '#f2c6d8'], ['BÜCHER', '#3a2a52', '#f2e9c8'], ['STATE BANK', '#0b2a5b', '#e8d9a0'], ['GRAND HOTEL', '#4a0f1c', '#e8c870']];
+// Fassadenmodule eines Wandkörpers (r: bx,bz,w,d,y0,floors,sid,doorN,doorHalf,doorFloors,street[4],balc,shop)
+function facade3D(r) {
+  const st = FSTYLES[r.sid], S3 = ST3[r.sid], tint = lc(pick(S3.tints)), arch = r.sid === 'brick' && Math.random() < 0.5, kind = arch ? 'wArch' : S3.kind;
+  const awn = lc(pick(AWNING)), conc = lc('#b8b8b2'), stone = lc('#dcd6c8');
+  for (let side = 0; side < 4; side++) {
+    const [nx, nz] = DIRS[side], tx = nz, tz = -nx, len = nx ? r.d : r.w, nb = bayN(len, st), pitch = len / nb;
+    const face = { cx: r.bx + nx * r.w / 2, cz: r.bz + nz * r.d / 2, nx, nz, hl: len / 2, y0: r.y0, y1: r.y0 + r.floors * 3.6, m: {}, d: 0 };
+    const add = (k, a, y, ...v) => (face.m[k] ||= []).push(face.cx + tx * a, y, face.cz + tz * a, ...v);
+    const isDoor = r.doorN && r.doorN[0] === nx && r.doorN[1] === nz, mp = pitch / S3.mods, sx = mp / K3[kind].nom, street = r.street[side];
+    for (let f = 0; f < r.floors; f++) {
+      const y = r.y0 + f * 3.6;
+      for (let k = 0; k < nb * S3.mods; k++) {
+        const a = (k + 0.5) * mp - len / 2, inDoor = isDoor && Math.abs(a) < r.doorHalf + mp * 0.4;
+        if (f === 0 && r.shop && street) { if (!(isDoor && Math.abs(a) < 2.9 + mp * 0.5)) { add('shop', a, y, mp / 3.5, 1, ...tint, Math.random(), Math.random() < 0.6 ? 1 : 0); if (Math.random() < 0.65) add('awn', a, y, mp / 3.5, 1, ...awn, 0, 0); } continue; }
+        if (inDoor && f <= r.doorFloors) continue;
+        add(kind, a, y, sx, 1, ...tint, Math.random(), Math.random() < 0.5 ? 1 : 0);
+        if (r.balc && street && f >= 1 && ((k + f) & 1) === 0 && !(isDoor && f <= r.doorFloors && Math.abs(a) < r.doorHalf + 2.2)) add('balc', a, y, 1, 1, ...(r.sid === 'stucco' ? tint : conc), 0, 0);
+      }
+      if (S3.ledge && f >= 1) add('bar', 0, y - 0.06, len + S3.ledge[1] * 2, S3.ledge[0], ...(r.sid === 'concrete' ? conc : stone), S3.ledge[1], 0);
+    }
+    if (S3.pil) for (let k = 0; k <= nb; k++) { const a = k * pitch - len / 2; if (isDoor && Math.abs(a) < r.doorHalf + 0.8 && k > 0 && k < nb) continue; add('bar', a, r.y0, S3.pil[0], r.floors * 3.6, ...(r.sid === 'concrete' ? conc : stone), S3.pil[1], 0); }
+    if (Object.keys(face.m).length) { FACES.push(face); }
+  }
+}
+// Statische Details je Gebäude: Sockel, Gesimse, Brüstung bzw. Walmdach, Dachaufbauten (alles in den Chunk-Trim)
+function trimBuilding(T, bx, bz, w, d, h, sid, color, hip, floors) {
+  const H = 0.2 + h, col = lc(color), dk = col.map(v => v * 0.8), P = (ww, hh, dd, y, c, sk = 0) => T.box(bx - ww / 2, bx + ww / 2, y, y + hh, bz - dd / 2, bz + dd / 2, c, sk);
+  const plinth = { classic: '#a8a396', brick: '#6b5a4e', stucco: '#cfc3ae', concrete: '#8d8d88', glass: '#3a3f46' }[sid];
+  P(w + 0.3, 0.7, d + 0.3, 0.2, lc(plinth), 8);
+  if (sid === 'brick' || sid === 'stucco') P(w + 0.2, 0.28, d + 0.2, 3.72, lc(sid === 'brick' ? '#d9ccb4' : '#cdbfa6'));
+  if (sid === 'classic') { P(w + 0.9, 0.35, d + 0.9, H - 0.35, lc('#d8d2c4')); P(w + 0.6, 0.25, d + 0.6, H - 0.6, lc('#c4bdb0')); }
+  else if (sid === 'brick') P(w + 0.5, 0.3, d + 0.5, H - 0.3, lc('#b8a898'));
+  else if (sid === 'stucco') P(w + 0.8, 0.25, d + 0.8, H - 0.25, lc('#b5643c'));
+  else if (sid === 'glass') P(w + 0.1, 0.7, d + 0.1, H - 0.7, lc('#2a2f35'));
+  const Y = H + 0.5; // Oberkante der Dachplatte
+  if (hip) { T.hip(bx, bz, Y - 0.1, w + 1.2, d + 1.2, 1.9, 3.0, lc('#b5643c')); if (w > 9) T.box(bx + w * 0.2 - 0.4, bx + w * 0.2 + 0.4, Y, Y + 3.1, bz - 0.4, bz + 0.4, lc('#a8704f'), 8); return; }
+  const pc = dk, W = w + 0.4, D = d + 0.4, t = 0.28, ph = sid === 'glass' ? 0.5 : 0.9;
+  T.box(bx - W / 2, bx + W / 2, Y, Y + ph, bz - D / 2, bz - D / 2 + t, pc, 8); T.box(bx - W / 2, bx + W / 2, Y, Y + ph, bz + D / 2 - t, bz + D / 2, pc, 8);
+  T.box(bx - W / 2, bx - W / 2 + t, Y, Y + ph, bz - D / 2 + t, bz + D / 2 - t, pc, 8); T.box(bx + W / 2 - t, bx + W / 2, Y, Y + ph, bz - D / 2 + t, bz + D / 2 - t, pc, 8);
+  // Dachaufbauten
+  const rx = () => bx + rnd(-w / 3, w / 3), rz = () => bz + rnd(-d / 3, d / 3);
+  if (floors >= 5 && w > 10 && d > 10 && Math.random() < 0.3) { // Wassertank auf Gestell
+    const x = rx(), z = rz(), c = lc('#7a5a3a');
+    for (const [dx, dz] of [[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9], [0.9, 0.9]]) T.box(x + dx - 0.07, x + dx + 0.07, Y, Y + 1.3, z + dz - 0.07, z + dz + 0.07, lc('#4a4d50'), 8);
+    T.cyl(x, z, Y + 1.3, Y + 3.7, 1.3, 10, c); T.cyl(x, z, Y + 3.7, Y + 4.6, 1.38, 10, lc('#5a4630'), 0);
+    for (const yy of [1.9, 2.9]) T.cyl(x, z, Y + yy, Y + yy + 0.08, 1.34, 10, lc('#3a3d40'));
+  }
+  if (floors >= 5 && w > 9 && d > 9 && Math.random() < 0.45) { // Treppenhaus-/Aufzugsaufbau
+    const x = rx(), z = rz(), sw = rnd(2.8, 3.8), sd = rnd(2.6, 3.4);
+    T.box(x - sw / 2, x + sw / 2, Y, Y + 3.0, z - sd / 2, z + sd / 2, lc('#bfb8aa'), 8); T.box(x - sw / 2 - 0.2, x + sw / 2 + 0.2, Y + 3.0, Y + 3.25, z - sd / 2 - 0.2, z + sd / 2 + 0.2, lc('#6b6e70'), 8);
+    T.box(x - 0.5, x + 0.5, Y, Y + 2.1, z - sd / 2 - 0.06, z - sd / 2, lc('#3a3f46'), 8);
+  }
+  for (let k = rint(1, 3); k > 0; k--) { // Klimageräte mit Lüfter
+    const x = rx(), z = rz(), a = rnd(1.6, 2.6), b2 = rnd(1.0, 1.6), hh = rnd(0.9, 1.4);
+    T.box(x - a / 2, x + a / 2, Y, Y + hh, z - b2 / 2, z + b2 / 2, lc('#c8cccf'), 8); T.cyl(x - a * 0.22, z, Y + hh, Y + hh + 0.07, b2 * 0.36, 8, lc('#2a2d30'));
+    if (a > 2) T.cyl(x + a * 0.22, z, Y + hh, Y + hh + 0.07, b2 * 0.36, 8, lc('#2a2d30'));
+  }
+}
+function addSign(x, z, nx, nz, y, row) { SIGNS.push([x, z, nx, nz, y, row]); }
+
+let F3 = null;
+const _f3p = new THREE.Vector3(), _f3d = new THREE.Vector3();
+const F3_TA = 60, F3_TB = 130, F3_TC = 190; // LOD-Radien in Metern: volle Module / vereinfachte Rahmen / nur Glas
+function makeFrame3D() { return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, metalness: 0.05 }); }
+function makeGlass3D() { // Fensterglas mit Innenraum-Parallaxe (Interior Mapping): Raumbox hinter der Scheibe, nachts beleuchtete Räume
+  const m = new THREE.MeshStandardMaterial({ color: 0x0a1018, roughness: 0.06, metalness: 0, emissive: 0xffffff, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  m.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vPUv; varying vec3 vTS; varying vec2 vSz;')
+      .replace('#include <fog_vertex>', `#include <fog_vertex>
+      mat4 imw = modelMatrix * instanceMatrix; vec3 ta = imw[0].xyz, ba = imw[1].xyz, na = normalize(imw[2].xyz);
+      vSz = vec2(length(ta), length(ba)); vec3 vv = cameraPosition - (imw * vec4(position, 1.0)).xyz;
+      vTS = vec3(dot(vv, ta / vSz.x), dot(vv, ba / vSz.y), dot(vv, na)); vPUv = uv;`);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vPUv; varying vec3 vTS; varying vec2 vSz;\nfloat h11(float n) { return fract(sin(n * 12.9898 + 1.7) * 43758.5453); }')
+      .replace('#include <color_fragment>', `
+      vec3 vw = normalize(vTS); vec3 rdv = normalize(vec3(-vw.xy, min(-vw.z, -0.04)));
+      float sd = floor(vColor.r * 1023.0 + 0.5) + 1.0, lit = step(0.5, vColor.g), refl = vColor.b;
+      vec3 pp = vec3(vPUv * vSz, 0.0);
+      float rw = 0.5 + 1.2 * h11(sd * 7.0), rdp = 2.8 + 2.2 * h11(sd * 3.0);
+      vec3 mn = vec3(-rw, -0.85, -rdp), mx = vec3(vSz.x + rw, vSz.y + 0.55, 0.0);
+      vec3 inv = 1.0 / (rdv + 1e-5);
+      vec3 tf = max((mn - pp) * inv, (mx - pp) * inv);
+      float tt = min(tf.x, min(tf.y, tf.z)); vec3 hp = pp + rdv * tt;
+      vec3 wallC = mix(vec3(.86, .82, .72), vec3(.62, .72, .80), h11(sd * 11.0)) * (0.7 + 0.5 * h11(sd * 5.0));
+      vec3 ic;
+      if (tt == tf.z) {
+        ic = wallC;
+        float furn = step(hp.y, 0.8 + 0.7 * h11(sd * 13.0)) * step(0.45, h11(sd * 17.0));
+        ic = mix(ic, wallC * 0.4, furn * (0.55 + 0.45 * step(0.5, fract(hp.x * 0.9 + sd * 5.0))));
+        vec2 pc = vec2(vSz.x * (0.2 + 0.6 * h11(sd * 19.0)), vSz.y * 0.6 + 0.3);
+        float pic = step(abs(hp.x - pc.x), 0.4) * step(abs(hp.y - pc.y), 0.3) * step(0.5, h11(sd * 23.0));
+        ic = mix(ic, vec3(.45, .3, .2) * (0.6 + h11(sd * 29.0)), pic);
+      } else if (tt == tf.y) ic = rdv.y > 0.0 ? vec3(.9) : vec3(.38, .28, .2);
+      else ic = wallC * 0.7;
+      ic *= 1.0 - 0.5 * clamp(-hp.z / 5.0, 0.0, 1.0);
+      float cur = step(0.55, h11(sd * 31.0)) * (1.0 - smoothstep(0.1, 0.26, min(vPUv.x, 1.0 - vPUv.x)));
+      float bld = step(0.8, h11(sd * 37.0)) * step(0.85 - 0.5 * h11(sd * 41.0), vPUv.y);
+      ic = mix(ic, mix(vec3(.75, .7, .6), vec3(.5, .22, .2), h11(sd * 43.0)), max(cur, bld));
+      vec3 intCol = ic * mix(vec3(1.0), vec3(1.25, 1.0, .7), lit);
+      float nf = clamp(emissive.r / 1.6, 0.0, 1.0);
+      diffuseColor.rgb = mix(vec3(.02, .03, .04), vec3(.14, .22, .3), refl);`)
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = refl * 0.8;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance = intCol * (0.2 * (1.0 - nf) * (1.0 - 0.6 * refl) + lit * nf * 1.1 * (1.0 - 0.3 * refl));');
+  };
+  m.customProgramCacheKey = () => 'glass3d-v1';
+  return m;
+}
+function buildFacades3D() {
+  const G = buildModGeos(), cap = { wClassic: 6000, wBrick: 5000, wArch: 5000, wStucco: 5000, wConc: 5000, curt: 9000, shop: 1500, awn: 1500, balc: 3000, balcLo: 3000, bar: 6000, ring: 15000, glass: 26000 };
+  const fm = M.facades.f3, gm = M.facades.g3; F3 = { meshes: {}, pos: new THREE.Vector3(1e9, 0, 0), fwd: new THREE.Vector3(), dirty: true };
+  for (const k in cap) {
+    const mesh = new THREE.InstancedMesh(G[k], k === 'glass' ? gm : fm, cap[k]);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap[k] * 3), 3); mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    mesh.count = 0; mesh.frustumCulled = false; mesh.receiveShadow = true; mesh.castShadow = false; scene.add(mesh);
+    F3.meshes[k] = { mesh, arr: mesh.instanceMatrix.array, col: mesh.instanceColor.array, n: 0, cap: cap[k] };
+  }
+  const prevBR = scene.onBeforeRender; // Instanzen vor dem Projizieren der Szene füllen (sonst hinkt der Upload ein Bild hinterher)
+  scene.onBeforeRender = function (rr, sc, cam, ...a) { if (cam === camera) updateFacades3D(cam); prevBR.call(this, rr, sc, cam, ...a); };
+  for (const f of FACES) for (const k in f.m) f.m[k] = Float32Array.from(f.m[k]);
+  // Ladenschilder: ein Atlas, ein Mesh
+  if (SIGNS.length) {
+    const R = SIGN_ROWS.length, tex = canvasTex(1024, 128 * R, (c, w, h) => {
+      SIGN_ROWS.forEach(([t, bg, fg], i) => { c.fillStyle = bg; c.fillRect(0, i * 128, w, 128); c.strokeStyle = fg; c.lineWidth = 6; c.strokeRect(8, i * 128 + 8, w - 16, 112); c.fillStyle = fg; c.font = 'bold 76px Arial Black, Impact, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(t, w / 2, i * 128 + 68); });
+    });
+    const geos = SIGNS.map(([x, z, nx, nz, y, row]) => {
+      const g = new THREE.PlaneGeometry(5.6, 0.7), uv = g.attributes.uv;
+      for (let i = 0; i < 4; i++) uv.setXY(i, uv.getX(i), 1 - (row + 1) / R + uv.getY(i) / R);
+      g.rotateY(Math.atan2(nx, nz)); g.translate(x, y, z); return g;
+    });
+    const sm = new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.25, roughness: 0.5 });
+    Object.assign(sm, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.NotEqualStencilFunc, stencilZPass: THREE.KeepStencilOp });
+    const m = new THREE.Mesh(mergeGeometries(geos), sm); scene.add(m); ADMATS.push(sm);
+  }
+}
+function updateFacades3D(cam) {
+  cam.getWorldPosition(_f3p); cam.getWorldDirection(_f3d);
+  if (!F3.dirty && _f3p.distanceTo(F3.pos) < 6 && _f3d.dot(F3.fwd) > 0.985) return;
+  F3.dirty = false; F3.pos.copy(_f3p); F3.fwd.copy(_f3d);
+  const cx = _f3p.x, cy = _f3p.y, cz = _f3p.z, fx = _f3d.x, fy = _f3d.y, fz = _f3d.z, hv = Math.atan(Math.tan(cam.fov * Math.PI / 360) * Math.hypot(1, cam.aspect)) + 0.3, list = [];
+  for (const f of FACES) {
+    const rx = f.cx - cx, rz = f.cz - cz;
+    if (rx * f.nx + rz * f.nz > 0.5) continue; // Rückseite
+    const s = clamp((cx - f.cx) * f.nz - (cz - f.cz) * f.nx, -f.hl, f.hl), dd = Math.hypot(cx - (f.cx + f.nz * s), cy - clamp(cy, f.y0, f.y1), cz - (f.cz - f.nx * s));
+    if (dd > F3_TC) continue;
+    if (dd > 25) {
+      const ry = (f.y0 + f.y1) / 2 - cy, rl = Math.hypot(rx, ry, rz), R = Math.hypot(f.hl, (f.y1 - f.y0) / 2);
+      if (rl > R && Math.acos(clamp((rx * fx + ry * fy + rz * fz) / rl, -1, 1)) - Math.asin(Math.min(1, R / rl)) > hv) continue;
+    }
+    f.d = dd; list.push(f);
+  }
+  list.sort((a, b) => a.d - b.d);
+  const MS = F3.meshes; for (const k in MS) MS[k].n = 0;
+  const emit = (q, tx, tz, nx, nz, sw, sh, sd, px, py, pz, r, g, b) => {
+    if (q.n >= q.cap) return; const a = q.arr, o = q.n * 16, c = q.col, oc = q.n * 3; q.n++;
+    a[o] = tx * sw; a[o + 1] = 0; a[o + 2] = tz * sw; a[o + 3] = 0; a[o + 4] = 0; a[o + 5] = sh; a[o + 6] = 0; a[o + 7] = 0;
+    a[o + 8] = nx * sd; a[o + 9] = 0; a[o + 10] = nz * sd; a[o + 11] = 0; a[o + 12] = px; a[o + 13] = py; a[o + 14] = pz; a[o + 15] = 1;
+    c[oc] = r; c[oc + 1] = g; c[oc + 2] = b;
+  };
+  for (const f of list) {
+    const tier = f.d < F3_TA ? 0 : f.d < F3_TB ? 1 : 2, nx = f.nx, nz = f.nz, tx = nz, tz = -nx;
+    for (const kind in f.m) {
+      const a = f.m[kind], sp = K3[kind];
+      for (let o = 0; o < a.length; o += 10) {
+        const x = a[o], y = a[o + 1], z = a[o + 2], sx = a[o + 3], sy = a[o + 4];
+        if (sp.gw) {
+          if (tier === 0) emit(MS[kind], tx, tz, nx, nz, sx, sy, 1, x, y, z, a[o + 5], a[o + 6], a[o + 7]);
+          else if (tier === 1) emit(MS.ring, tx, tz, nx, nz, sp.gw * sx + sp.pad, sp.gh + sp.pad, 1, x, y + sp.gy - sp.pad / 2, z, a[o + 5], a[o + 6], a[o + 7]);
+          emit(MS.glass, tx, tz, nx, nz, sp.gw * sx, sp.gh, 1, x + nx * 0.04, y + sp.gy, z + nz * 0.04, a[o + 8], a[o + 9], sp.refl);
+        } else if (tier < 2) {
+          if (kind === 'bar') emit(MS.bar, tx, tz, nx, nz, sx, sy, a[o + 8], x, y, z, a[o + 5], a[o + 6], a[o + 7]);
+          else emit(tier === 0 || kind === 'awn' ? MS[kind] : MS.balcLo, tx, tz, nx, nz, sx, sy, 1, x, y, z, a[o + 5], a[o + 6], a[o + 7]);
+        }
+      }
+    }
+  }
+  for (const k in MS) {
+    const q = MS[k]; q.mesh.count = q.n; if (!q.n) continue;
+    const im = q.mesh.instanceMatrix, ic = q.mesh.instanceColor;
+    im.clearUpdateRanges(); im.addUpdateRange(0, q.n * 16); im.needsUpdate = true; ic.clearUpdateRanges(); ic.addUpdateRange(0, q.n * 3); ic.needsUpdate = true;
+  }
+}
+// TEMP-MESSUNG (Bootzeit der 3D-Fassaden), wird nach der Messung entfernt
+{ const T = (f) => (...a) => { const t = performance.now(); const r = f(...a); window.__f3Ms = (window.__f3Ms || 0) + performance.now() - t; return r; };
+  facade3D = T(facade3D); trimBuilding = T(trimBuilding); buildFacades3D = T(buildFacades3D); const g0 = GB.prototype.geo; GB.prototype.geo = function () { const t = performance.now(); const r = g0.call(this); window.__f3Ms = (window.__f3Ms || 0) + performance.now() - t; return r; }; }
 function wallBox(w, h, d, x, y, z, color, st = FSTYLES.classic) {
-  const g = new THREE.BoxGeometry(w, h, d), uv = g.attributes.uv, TW = st.TW, TH = st.TH;
+  const g = new THREE.BoxGeometry(w, h, d), uv = g.attributes.uv, TH = st.TH;
   const ou = rint(0, st.bays - 1) / st.bays, ov = rint(0, st.floors - 1) / st.floors;
+  const nbD = bayN(d, st), nbW = bayN(w, st); // ganze Fensterachsen je Wand: die 3D-Module sitzen deckungsgleich auf den gemalten Fenstern
   for (let f = 0; f < 6; f++) for (let v = 0; v < 4; v++) {
     const i = f * 4 + v; let u = uv.getX(i), vv = uv.getY(i);
-    if (f < 2) { u = u * d / TW + ou; vv = vv * h / TH + ov; }
-    else if (f >= 4) { u = u * w / TW + ou; vv = vv * h / TH + ov; }
+    if (f < 2) { u = u * nbD / st.bays + ou; vv = vv * h / TH + ov; }
+    else if (f >= 4) { u = u * nbW / st.bays + ou; vv = vv * h / TH + ov; }
     else { u = 0.005; vv = 0.005; }
     uv.setXY(i, u, vv);
   }
@@ -744,21 +1068,23 @@ function genBlock(i, j, chunk) {
       chunk.roofs.push(box(w + 0.4, 0.5, d + 0.4, bx, 0.2 + h + 0.25, bz, roofCol));
       if (sid === 'stucco' && floors <= 5) chunk.roofs.push(box(w + 1.2, 0.18, d + 1.2, bx, 0.2 + h + 0.1, bz, '#b5643c'));
       if (floors <= 8 && Math.random() < 0.12) billboard(bx, 0.2 + h + 0.5, bz, w, d);
-      let top = h;
+      let top = h, set = null;
+      const hip = sid === 'stucco' && floors <= 5 && Math.random() < 0.55;
+      trimBuilding(chunk.trim, bx, bz, w, d, h, sid, color, hip, floors);
       if (h > 55 && w > 12 && d > 12) {
         const h2 = Math.round(rnd(0.15, 0.4) * h / 3.6) * 3.6, w2 = w * rnd(0.55, 0.75), d2 = d * rnd(0.55, 0.75);
         chunk.walls[sid].push(wallBox(w2, h2, d2, bx, 0.2 + h + h2 / 2, bz, color, st));
         chunk.roofs.push(box(w2 + 0.4, 0.5, d2 + 0.4, bx, 0.2 + h + h2 + 0.25, bz, '#4d5155'));
-        top = h + h2;
+        top = h + h2; set = { w: w2, d: d2, floors: h2 / 3.6, y0: 0.2 + h };
         if (Math.random() < 0.6) chunk.roofs.push(box(0.4, rnd(8, 18), 0.4, bx, 0.2 + top + 6, bz, '#888'));
       }
-      for (let k = rint(0, 3); k > 0; k--) {
+      for (let k = hip ? 0 : rint(0, 3); k > 0; k--) {
         const aw = rnd(1.5, 4), ad = rnd(1.5, 4), ah = rnd(1, 2.5);
         chunk.roofs.push(box(aw, ah, ad, bx + rnd(-w / 3, w / 3), 0.2 + h + 0.5 + ah / 2, bz + rnd(-d / 3, d / 3), pick(['#9a9c9e', '#7d8083', '#b0b2b4'])));
       }
       const bsol = addSolid(bx - w / 2, bx + w / 2, bz - d / 2, bz + d / 2, top + 0.7);
       mapBuildings.push([bx - w / 2, bz - d / 2, w, d]);
-      addBuilding(chunk, bx, bz, w, d, Math.round(top / 3.6), cx, cz, floors <= 5, bsol);
+      addBuilding(chunk, bx, bz, w, d, Math.round(top / 3.6), cx, cz, floors <= 5, bsol, { sid, floors, set });
       pz += cd;
     }
     px += cw;
@@ -787,17 +1113,19 @@ function buildBillboards() {
 const ADMATS = [];
 const AWNING = ['#2c3e50', '#8e2b2b', '#2b6e4f', '#444444', '#6b4e2e', '#1f4f6e'];
 // Gebäude registrieren + Eingangstür an der Straßenseite
-function addBuilding(chunk, bx, bz, w, d, floors, cx, cz, low, solid) {
+function addBuilding(chunk, bx, bz, w, d, floors, cx, cz, low, solid, det) {
   const fd = [(bz - d / 2) - (cz - B / 2), (cx + B / 2) - (bx + w / 2), (cz + B / 2) - (bz + d / 2), (bx - w / 2) - (cx - B / 2)];
   let side = 0; for (let k = 1; k < 4; k++) if (fd[k] < fd[side]) side = k;
   const rr0 = Math.random(), type = floors > 11 ? (Math.min(w, d) >= 19 && rr0 < 0.3 ? 'hotel' : 'office') : low && rr0 < 0.5 ? 'shop' : rr0 > 0.5 && rr0 < 0.56 ? 'bank' : Math.random() < 0.6 ? 'apartment' : 'office';
   const bld = { x: bx, z: bz, w, d, floors: Math.max(2, floors), seed: Math.floor(Math.random() * 1e9), type, door: null, solid };
+  let ent3 = null;
   if (fd[side] < 6 && Math.min(w, d) > 7) {
     const [nx, nz] = DIRS[side], tx = -nz, tz = nx;
     const fx = bx + nx * w / 2, fz = bz + nz * d / 2;
     const ob = (along, h, thick, off, y, col) => chunk.roofs.push(nx ? box(thick, h, along, fx + nx * off, y, fz, col) : box(along, h, thick, fx, y, fz + nz * off, col));
     const tall = floors > 11, ent = type === 'shop' ? 'shop' : type === 'hotel' ? 'hotel' : type === 'bank' ? 'bank' : tall ? 'tower' : type === 'apartment' ? 'apt' : pick(['office', 'apt']);
     const frame = pick(['#2a2c30', '#3a3328', '#b8b2a8', '#1a2a3a', '#5a5f66']), tint = pick(['#1d2a38', '#24323e', '#2a3a30', '#30283a']);
+    ent3 = ent;
     if (ent === 'tower') {
       ob(5.2, 4.2, 0.3, 0.1, 0.2 + 2.1, frame); ob(4.4, 3.8, 0.12, 0.22, 0.2 + 1.9, tint);
       ob(7.5, 0.25, 3.2, 1.6, 0.2 + 4.6, '#d0d4d8'); for (const sgn of [-1, 1]) chunk.roofs.push(nx ? box(0.18, 4.6, 0.18, fx + nx * 3.0, 0.2 + 2.3, fz + sgn * 3.4, '#9aa0a6') : box(0.18, 4.6, 0.18, fx + sgn * 3.4, 0.2 + 2.3, fz + nz * 3.0, '#9aa0a6'));
@@ -822,6 +1150,16 @@ function addBuilding(chunk, bx, bz, w, d, floors, cx, cz, low, solid) {
     if (type === 'shop' || type === 'bank' || Math.random() < 0.15) { const ax = fx + nx * 0.35 + tx * 2.4, az = fz + nz * 0.35 + tz * 2.4; chunk.roofs.push(nx ? box(0.5, 1.7, 0.75, ax, 0.2 + 0.85, az, '#2a6a3a') : box(0.75, 1.7, 0.5, ax, 0.2 + 0.85, az, '#2a6a3a')); ATMS.push({ x: ax + nx * 0.7, z: az + nz * 0.7, bx: ax, bz: az }); }
     if (type === 'bank' || type === 'hotel') bld.sign = true;
     bld.door = { x: fx + nx * 1.1, z: fz + nz * 1.1, nx, nz, tx, tz };
+    if (type === 'shop' || type === 'bank' || type === 'hotel') { // Schild über dem Eingang
+      const row = type === 'bank' ? 6 : type === 'hotel' ? 7 : rint(0, 5), sy = type === 'bank' ? 5.5 : type === 'hotel' ? 4.5 : 4.5;
+      addSign(fx + nx * 0.17, fz + nz * 0.17, nx, nz, 0.2 + sy, row); chunk.trim.box(Math.min(fx, fx + nx * 0.14) - (nx ? 0 : 2.85), Math.max(fx, fx + nx * 0.14) + (nx ? 0 : 2.85), 0.2 + sy - 0.4, 0.2 + sy + 0.4, Math.min(fz, fz + nz * 0.14) - (nz ? 0 : 2.85), Math.max(fz, fz + nz * 0.14) + (nz ? 0 : 2.85), lc('#1a1a1a'));
+    }
+  }
+  if (det) {
+    bld.sid = det.sid;
+    const doorHalf = { tower: 3.0, hotel: 2.6, bank: 3.0, apt: 1.8, office: 1.9, shop: 2.9 }[ent3] ?? 2, street = fd.map(v => v < 6);
+    facade3D({ bx, bz, w, d, y0: 0.2, floors: det.floors, sid: det.sid, doorN: bld.door ? [bld.door.nx, bld.door.nz] : null, doorHalf, doorFloors: ent3 === 'tower' || ent3 === 'bank' ? 1 : 0, street, shop: type === 'shop', balc: det.sid !== 'glass' && (type === 'apartment' ? Math.random() < 0.8 : det.sid === 'stucco' && Math.random() < 0.6) });
+    if (det.set) facade3D({ bx, bz, w: det.set.w, d: det.set.d, y0: det.set.y0, floors: det.set.floors, sid: det.sid, doorN: null, doorHalf: 0, doorFloors: 0, street: [false, false, false, false], shop: false, balc: false });
   }
   BUILDINGS.push(bld);
 }
@@ -836,6 +1174,7 @@ function randomDoorNear(x, z, minD, maxD) {
 }
 const trees = [], lamps = [];
 async function buildCity(progress) {
+  const __t0 = performance.now(); // TEMP-MESSUNG
   // Boden
   buildTerrain();
   const roadSize = EXT * 2 + 8;
@@ -852,7 +1191,7 @@ async function buildCity(progress) {
   for (let i = 0; i < N; i++) {
     for (let j = 0; j < N; j++) {
       const ck = Math.floor(i / 4) + ',' + Math.floor(j / 4);
-      if (!chunks.has(ck)) chunks.set(ck, { walls: {}, roofs: [] });
+      if (!chunks.has(ck)) chunks.set(ck, { walls: {}, roofs: [], trim: new GB() });
       const cx = blockCenter(i), cz = blockCenter(j);
       const sw = new THREE.BoxGeometry(B, 0.2, B); const uv = sw.attributes.uv;
       for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * B / 3, uv.getY(k) * B / 3);
@@ -886,7 +1225,10 @@ async function buildCity(progress) {
   for (const c of chunks.values()) {
     for (const id in c.walls) { const m = new THREE.Mesh(mergeGeometries(c.walls[id]), M.facades[id]); m.castShadow = m.receiveShadow = true; scene.add(m); }
     if (c.roofs.length) { const r = new THREE.Mesh(mergeGeometries(c.roofs), M.vcol); r.castShadow = r.receiveShadow = true; scene.add(r); }
+    if (c.trim.i.length) { const tm = new THREE.Mesh(c.trim.geo(), M.vcol); tm.receiveShadow = true; scene.add(tm); }
   }
+  buildFacades3D();
+  window.__cityMs = performance.now() - __t0; // TEMP-MESSUNG
   buildBillboards();
   const swm = new THREE.Mesh(mergeGeometries(sidewalk), new THREE.MeshStandardMaterial({ map: TEX.concrete, roughness: 0.9 }));
   swm.receiveShadow = true; scene.add(swm);
@@ -1145,97 +1487,406 @@ const CLOTH = ['#b03a2e', '#2e86c1', '#28b463', '#f1c40f', '#7d3c98', '#e67e22',
 const OFFICE = ['#f4f6f8', '#cfe0f2', '#e8e2d4', '#2f3a4a', '#9fb7c9', '#ffffff'];
 const PANTS = ['#1f2a44', '#2b2b2b', '#5d4e3a', '#3f4a3c', '#7a7a7a', '#14213d', '#4a5d7a', '#c2b59b'];
 const FEM_T = ['#ffffff', '#f0e6dc', '#e6d8ff', '#d8f0e6', '#ffe2d0', '#d0dcf0'];
-const MALE_V = ['thorsten', 'karlsson', 'pavoque'], FEM_V = ['kerstin', 'ramona'];
+const MALE_V = ['pm_young', 'pm_old', 'pm_brisk'], FEM_V = ['f_recep', 'f_young', 'f_eva'];
 function pedLook(office = false) {
   if (Math.random() < 0.45) return { gender: 'f', tint: pick(FEM_T) };
   return { gender: 'm', skin: pick(SKIN_T), shirt: pick(office ? OFFICE : CLOTH), pants: pick(PANTS), shoes: pick(['#ffffff', '#3a3a3a', '#8a6a4a', '#c0c0c0']), hair: pick(HAIR), beard: Math.random(), hairStyle: pick(['buzz', 'buzz', 'slick', 'bald']), hat: Math.random() < 0.2 ? pick(['#3a2a1c', '#222222', '#c8a070']) : null };
 }
 const officeLook = () => pedLook(true);
-const voiceFor = L => L.gender === 'f' ? [pick(FEM_V), rnd(0.95, 1.08)] : [pick(MALE_V), rnd(0.9, 1.1)];
+const voiceFor = L => L.gender === 'f' ? [pick(FEM_V), rnd(0.96, 1.05)] : [pick(MALE_V), rnd(0.95, 1.05)];
 function buildFacePool() {}
 
 // ---------- Cars ----------
 const carGeoCache = {};
-function extrudeProfile(pts, depth, bevel) {
-  const s = new THREE.Shape(); s.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
-  const g = new THREE.ExtrudeGeometry(s, bevel ? { depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2, curveSegments: 1 } : { depth, bevelEnabled: false });
-  g.rotateY(-Math.PI / 2); g.translate(depth / 2, 0, 0); return g;
-}
-function carGeos(L, W, hs, kind = 'car') {
-  const key = L + '_' + W + '_' + hs + kind; if (carGeoCache[key]) return carGeoCache[key];
-  const Y = y => 0.32 + (y - 0.32) * hs;
-  const body = extrudeProfile([[0.05, 0.32], [0, Y(0.82)], [0.3, Y(0.96)], [L - 1.3, Y(0.98)], [L - 0.4, Y(0.88)], [L, Y(0.68)], [L - 0.04, 0.32]], W - 0.14, 0.07);
-  let ghP = [[0.85, Y(0.96)], [1.4, Y(1.46)], [L - 1.75, Y(1.46)], [L - 1.2, Y(0.97)]], top = Y(1.46);
-  if (kind === 'pickup') ghP = [[L * 0.43, Y(0.96)], [L * 0.47, Y(1.5)], [L - 1.75, Y(1.5)], [L - 1.2, Y(0.97)]];
-  if (kind === 'van') ghP = [[L - 1.62, Y(0.98)], [L - 1.56, Y(1.9)], [L - 1.4, Y(1.9)], [L - 0.7, Y(0.99)]];
-  if (kind === 'convertible') { ghP = [[L - 1.62, Y(0.97)], [L - 1.95, Y(1.32)], [L - 1.86, Y(1.34)], [L - 1.52, Y(0.97)]]; top = Y(1.0); }
-  const gh = extrudeProfile(ghP, W - 0.3, 0);
-  [body, gh].forEach(g => g.translate(0, 0, -L / 2));
-  const extra = [];
-  if (kind === 'van') { const cargo = extrudeProfile([[0.12, Y(0.97)], [0.16, Y(2.0)], [L - 1.62, Y(2.0)], [L - 1.62, Y(0.97)]], W - 0.24, 0.04); cargo.translate(0, 0, -L / 2); extra.push(cargo); top = Y(2.0); }
-  else if (kind !== 'convertible') { const roof = new THREE.BoxGeometry(W - 0.34, 0.05, ghP[2][0] - ghP[1][0]); roof.translate(0, ghP[1][1] + 0.025, (ghP[1][0] + ghP[2][0]) / 2 - L / 2); extra.push(roof.toNonIndexed()); }
-  const paintG = mergeGeometries([body, ...extra]);
-  let seat = null;
-  if (kind === 'convertible') {
-    const parts = [[0.5, 0.5, 0.5, 0.42, 0.2], [0.5, 0.5, 0.5, -0.42, 0.2], [1.3, 0.45, 0.5, 0, -0.9]].flatMap(([w, h, d, x, z]) => {
-      const a = new THREE.BoxGeometry(w, 0.18, d); a.translate(x, Y(0.98) + 0.05, z); const b = new THREE.BoxGeometry(w, h, 0.14); b.translate(x, Y(0.98) + h / 2, z - d / 2);
-      return [a.toNonIndexed(), b.toNonIndexed()];
-    });
-    seat = mergeGeometries(parts);
+// Monotone kubische Interpolation (Fritsch-Carlson) durch (x, y)-Punkte: glatte Profillinien ohne Überschwingen
+function cgProfile(pts) {
+  const n = pts.length, xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), d = [], m = [];
+  for (let i = 0; i < n - 1; i++) d[i] = (ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]);
+  m[0] = d[0]; m[n - 1] = d[n - 2];
+  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) { m[i] = m[i + 1] = 0; continue; }
+    const a = m[i] / d[i], b = m[i + 1] / d[i], s = a * a + b * b;
+    if (s > 9) { const t = 3 / Math.sqrt(s); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
   }
-  const trims = [
-    [W, 0.2, 0.16, 0, 0.42, L / 2 + 0.02], [W, 0.2, 0.16, 0, 0.42, -L / 2 - 0.02], [W * 0.5, 0.16, 0.05, 0, Y(0.6), L / 2 + 0.03],
-    [0.12, 0.1, 0.2, W / 2 + 0.05, Y(1.0), L / 2 - 1.5], [0.12, 0.1, 0.2, -W / 2 - 0.05, Y(1.0), L / 2 - 1.5],
-    ...(kind === 'pickup' ? [[W - 0.32, 0.03, L * 0.43 - 0.35, 0, Y(0.98) + 0.02, -L / 2 + 0.15 + (L * 0.43 - 0.35) / 2]] : []),
-  ].map(([w, h, d, x, y, z]) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(x, y, z); return g.toNonIndexed(); });
-  const lightG = (z, y) => { const a = new THREE.BoxGeometry(0.42, 0.13, 0.06), b = a.clone(); a.translate(W / 2 - 0.32, y, z); b.translate(-W / 2 + 0.32, y, z); return mergeGeometries([a, b]); };
-  const tire = colorize(new THREE.CylinderGeometry(0.36, 0.36, 0.26, 18).rotateZ(Math.PI / 2).toNonIndexed(), '#141414');
-  const rim = colorize(new THREE.CylinderGeometry(0.23, 0.23, 0.275, 10).rotateZ(Math.PI / 2).toNonIndexed(), '#c4c7cc');
-  return carGeoCache[key] = {
-    paint: paintG, glass: gh, trim: mergeGeometries(trims), head: lightG(L / 2 + 0.005, Y(0.74)), tail: lightG(-L / 2 - 0.005, Y(0.8)),
-    wheel: mergeGeometries([tire, rim]), top, seat,
+  return z => {
+    if (z <= xs[0]) return ys[0]; if (z >= xs[n - 1]) return ys[n - 1];
+    let i = 0; while (z > xs[i + 1]) i++;
+    const h = xs[i + 1] - xs[i], t = (z - xs[i]) / h, t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * m[i] + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h * m[i + 1];
   };
 }
+// Gitter-Fläche aus fn(i, j) -> [x, y, z]; wrap schließt die j-Richtung (Querschnittsring) mit gemeinsamen Vertices
+function cgGrid(nu, nv, fn, wrap = false) {
+  const nc = wrap ? nv : nv + 1, pos = new Float32Array((nu + 1) * nc * 3), idx = [];
+  for (let i = 0; i <= nu; i++) for (let j = 0; j < nc; j++) pos.set(fn(i, j), (i * nc + j) * 3);
+  for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
+    const j1 = wrap ? (j + 1) % nv : j + 1, a = i * nc + j, b = i * nc + j1, c = (i + 1) * nc + j, d = (i + 1) * nc + j1;
+    idx.push(a, b, c, b, d, c);
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+// Flächenorientierung: Normalen zeigen von der Referenzachse weg (sign = 1) oder zu ihr hin (sign = -1)
+function cgOrient(g, ref, sign = 1) {
+  const p = g.attributes.position.array, ix = g.index.array; let s = 0;
+  for (let t = 0; t < ix.length; t += 3) {
+    const a = ix[t] * 3, b = ix[t + 1] * 3, c = ix[t + 2] * 3;
+    const ux = p[b] - p[a], uy = p[b + 1] - p[a + 1], uz = p[b + 2] - p[a + 2], vx = p[c] - p[a], vy = p[c + 1] - p[a + 1], vz = p[c + 2] - p[a + 2];
+    const cx = (p[a] + p[b] + p[c]) / 3, cy = (p[a + 1] + p[b + 1] + p[c + 1]) / 3, cz = (p[a + 2] + p[b + 2] + p[c + 2]) / 3, r = ref(cx, cy, cz);
+    s += (uy * vz - uz * vy) * (cx - r[0]) + (uz * vx - ux * vz) * (cy - r[1]) + (ux * vy - uy * vx) * (cz - r[2]);
+  }
+  if (s * sign < 0) { for (let t = 0; t < ix.length; t += 3) { const q = ix[t + 1]; ix[t + 1] = ix[t + 2]; ix[t + 2] = q; } g.computeVertexNormals(); }
+  return g;
+}
+const cgAxis = cy => (x, y, z) => [0, cy, z];
+function cgOffset(g, d) {
+  const p = g.attributes.position, n = g.attributes.normal;
+  for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) + n.getX(i) * d, p.getY(i) + n.getY(i) * d, p.getZ(i) + n.getZ(i) * d);
+  return g;
+}
+const cgPatch = (surf, a0, a1, b0, b1, na, nb, off, cy = 0.8) => cgOffset(cgOrient(cgGrid(na, nb, (i, j) => surf(a0 + (a1 - a0) * i / na, b0 + (b1 - b0) * j / nb)), cgAxis(cy)), off);
+// Band entlang einer Kurve (a, b)-Punkte auf der Fläche surf, mit Breite hw0..hw1 und Abhebung off
+function cgRibbon(surf, pts, hw0, hw1, off, cy = 0.8) {
+  const n = pts.length - 1, P = pts.map(([a, b]) => surf(a, b)), e = 1e-3;
+  const sub = (u, v) => [u[0] - v[0], u[1] - v[1], u[2] - v[2]], cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const nz = v => { const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const g = cgGrid(n, 1, (i, j) => {
+    const [a, b] = pts[i], p = P[i], t = sub(P[Math.min(n, i + 1)], P[Math.max(0, i - 1)]);
+    let nn = nz(cr(sub(surf(a + e, b), surf(a - e, b)), sub(surf(a, b + e), surf(a, b - e))));
+    if (nn[0] * p[0] + nn[1] * (p[1] - cy) < 0) nn = [-nn[0], -nn[1], -nn[2]];
+    const bn = nz(cr(t, nn)), w = (hw0 + (hw1 - hw0) * i / n) * (j ? 1 : -1);
+    return [p[0] + bn[0] * w + nn[0] * off, p[1] + bn[1] * w + nn[1] * off, p[2] + bn[2] * w + nn[2] * off];
+  });
+  return cgOrient(g, cgAxis(cy));
+}
+// Quader (ohne UV) mit Vertexfarbe, optional gedreht
+function cgBox(w, h, d, x, y, z, col, rx = 0, ry = 0, rz = 0) {
+  const g = new THREE.BoxGeometry(w, h, d); g.deleteAttribute('uv');
+  if (rx || ry || rz) g.applyMatrix4(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rx, ry, rz)));
+  g.translate(x, y, z); return col ? colorize(g, col) : g;
+}
+// flaches Polygon (x, y) in der Ebene z; dir > 0 schaut nach +z, dir < 0 nach -z (Heckseite)
+function cgPoly(pts, z, dir, col) {
+  const s = new THREE.Shape(); s.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
+  const g = new THREE.ShapeGeometry(s); g.deleteAttribute('uv');
+  if (dir < 0) g.rotateY(Math.PI);
+  g.translate(0, 0, z); return col ? colorize(g, col) : g;
+}
+const cgMirrorPts = pts => pts.map(([x, y]) => [-x, y]).reverse();
+function cgFin(list) { const g = mergeGeometries(list.filter(Boolean)); return g; }
+
+// Fahrzeugdaten: Dachlinie (Anteil der Länge von hinten, Höhe) und Kabine (hood = Haubenlänge, run = Länge der Frontscheibe,
+// zrr = Ende des Dachs von hinten, rrun = Länge der Heckscheibe, roof = Dachhöhe, wc = Kabinenbreite)
+const CG_SPEC = {
+  sedan: { top: [[0, .9], [.03, .93], [.1, .96], [.22, .985], [.5, .99], [.72, .99], [.78, .985], [.86, .94], [.94, .88], [1, .82]], hood: 1.25, run: .8, zrr: 1.45, rrun: .6, roof: 1.45, wc: .86, rear: true },
+  coupe: { top: [[0, .86], [.04, .9], [.12, .93], [.3, .94], [.5, .94], [.66, .935], [.74, .9], [.83, .87], [.93, .84], [1, .78]], hood: 1.3, run: .8, zrr: 1.45, rrun: .9, roof: 1.36, wc: .84, rear: true, sporty: true, cw: .11 },
+  muscle: { top: [[0, .9], [.04, .94], [.12, .97], [.3, .98], [.5, .98], [.6, .975], [.7, .95], [.85, .92], [1, .84]], hood: 1.4, run: .85, zrr: 1.55, rrun: .8, roof: 1.38, wc: .84, rear: true, sporty: true, cw: .11, scoop: true },
+  suv: { top: [[0, .98], [.03, 1.08], [.08, 1.12], [.3, 1.13], [.6, 1.13], [.76, 1.12], [.84, 1.06], [.93, 1.0], [1, .93]], hood: 1.1, run: .65, zrr: .5, rrun: .25, roof: 1.78, wc: .86, rear: true, rack: true, cw: .2, tail: [.66, .92] },
+  compact: { top: [[0, .95], [.04, 1.0], [.1, 1.03], [.3, 1.04], [.62, 1.04], [.76, 1.02], [.86, .96], [.94, .9], [1, .85]], hood: 1.0, run: .55, zrr: .5, rrun: .3, roof: 1.52, wc: .86, rear: true, cw: .12, tail: [.7, .95] },
+  limo: { top: [[0, .92], [.03, .95], [.1, .98], [.2, .99], [.62, .99], [.77, .985], [.85, .95], [.93, .9], [1, .84]], hood: 1.25, run: .8, zrr: 1.7, rrun: .6, roof: 1.45, wc: .86, rear: true },
+  pickup: { top: [[0, 1.02], [.03, 1.06], [.08, 1.07], [.5, 1.07], [.62, 1.07], [.74, 1.06], [.86, 1.0], [.94, .95], [1, .9]], hood: 1.35, run: .7, zrr: 2.65, rrun: .15, roof: 1.78, wc: .86, rear: true, tail: [.78, .98],
+    bed: { z0: .12, z1: 2.4, floor: .86, lip: .12 } },
+  van: { top: [[0, 1.6], [.02, 1.86], [.06, 1.96], [.5, 1.97], [.54, 1.96], [.575, 1.15], [.7, 1.1], [.8, 1.06], [.9, 1.0], [.96, .95], [1, .88]], hood: .8, run: .85, zrr: 2.9, rrun: .05, roof: 1.97, wc: .92, tail: [.95, 1.45], bulk: true },
+  police: { top: [[0, .9], [.03, .93], [.1, .96], [.22, .985], [.5, .99], [.72, .99], [.78, .985], [.86, .94], [.94, .88], [1, .82]], hood: 1.25, run: .8, zrr: 1.45, rrun: .6, roof: 1.45, wc: .86, rear: true, cop: true },
+  convertible: { top: [[0, .88], [.04, .93], [.12, .96], [.2, .97], [.5, .96], [.7, .95], [.76, .94], [.85, .9], [.93, .86], [1, .8]], hood: 1.25, open: true, rear: true, sporty: true },
+};
+
+function carGeos(L, W, hs, kind = 'sedan') {
+  const key = L + '_' + W + '_' + hs + kind; if (carGeoCache[key]) return carGeoCache[key];
+  const S = CG_SPEC[kind] || CG_SPEC.sedan, hw = W / 2, K = 24, M = 12, ex = 2 / 4.5, exl = 2 / 6, tuck = 0.07;
+  const top = cgProfile(S.top.map(([f, y]) => [f * L, y]));
+  // ---- Kabine (Glashaus) ----
+  const zf0 = L - S.hood, zfr = zf0 - (S.run || 0.5), zrr = S.zrr || 1, zr0 = zrr - (S.rrun || 0.3);
+  const hasCab = !S.open, belt = hasCab ? top((zr0 + zf0) / 2) : top(zf0), B = belt - 0.06, Hh = (S.roof || 1.4) - B;
+  const s1 = zrr - zr0, s2 = zf0 - zfr;
+  const roofF = hasCab ? cgProfile([[zr0, 0], [zr0 + .5 * s1, .5], [zr0 + .85 * s1, .89], [zrr, 1], [(zrr + zfr) / 2, 1], [zfr, 1], [zfr + .15 * s2, .89], [zfr + .5 * s2, .5], [zf0, 0]]) : null;
+  const wcz = z => hw * S.wc * (0.8 + 0.2 * Math.sqrt(Math.max(0, Math.min(1, roofF(z)))));
+  const nc = 2 / 3.2;
+  const cabPt = (z, th) => {
+    const c = Math.cos(th), s = Math.sin(th), v = Math.pow(Math.max(s, 0), nc), u = Math.pow(Math.abs(c), nc) * Math.sign(c), H = Math.max(0, roofF(z)) * Hh;
+    return [wcz(z) * u * (1 - 0.1 * v * v), B + H * v, z];
+  };
+  // ---- Offene Bereiche (Innenraum, Pritsche, Cockpit) ----
+  const regs = [];
+  if (hasCab) regs.push({ z0: zr0, z1: zf0, floor: 0.46, xin: z => wcz(z), col: '#1d1e22' });
+  if (S.open) regs.push({ z0: L * 0.2, z1: zf0 - 0.02, floor: 0.46, xin: () => hw - 0.1, col: '#1d1e22' });
+  if (S.bed) regs.push({ z0: S.bed.z0, z1: S.bed.z1, floor: S.bed.floor, xin: () => hw - S.bed.lip, col: '#2a2b2e' });
+  // ---- Karosserie-Querschnitte ----
+  const wheelZ = [0.88, L - 0.88];
+  const par = z => {
+    const d = Math.min(z, L - z), cap = z < L / 2 ? 0.5 : 0.55, fe = 0.78;
+    let f = 1; if (d < cap) { const t = 1 - d / cap; f = fe + (1 - fe) * Math.sqrt(Math.max(0, 1 - t * t)); }
+    let y0 = 0.3 + 0.09 * (1 - smooth(0, 0.7, d));
+    for (const zw of wheelZ) { const dz = Math.abs(z - zw); if (dz < 0.45) y0 = Math.max(y0, 0.3 + Math.sqrt(0.2025 - dz * dz)); }
+    const y1 = Math.max(top(z), y0 + 0.14); let o = 0, rg = null;
+    for (const r of regs) { const q = smooth(r.z0, r.z0 + 0.1, z) * (1 - smooth(r.z1 - 0.1, r.z1, z)); if (q > o) { o = q; rg = r; } }
+    return { w: hw * f, f, y0, y1, yc: (y0 + y1) / 2, hh: (y1 - y0) / 2 * f, o, rg };
+  };
+  const ring = z => {
+    const p = par(z), pts = [];
+    for (let j = 0; j < K; j++) {
+      let x, y;
+      if (j <= M) {
+        const th = Math.PI * j / M, c = Math.cos(th), s = Math.sin(th), u = Math.pow(Math.abs(c), ex) * Math.sign(c), v = Math.pow(s, ex);
+        x = p.w * u * (1 - tuck * v * v); y = p.yc + p.hh * v + 0.025 * p.f * (1 - u * u) * v;
+        if (p.o > 0 && j >= 3 && j <= M - 3) {
+          const jj = j <= 6 ? j : M - j, xo = p.w * 0.9, xi = Math.min(p.rg.xin(z), xo - 0.05), yt = p.y1, yf = p.rg.floor;
+          const U = jj === 3 ? [xo, yt] : jj === 4 ? [xi + 0.012, yt] : jj === 5 ? [xi - 0.01, yf] : [0, yf];
+          const ux = j <= 6 ? U[0] : -U[0];
+          x += (ux - x) * p.o; y += (U[1] - y) * p.o;
+        }
+      } else {
+        const th = Math.PI * (1 + (j - M) / M), c = Math.cos(th), s = Math.sin(th);
+        x = p.w * Math.pow(Math.abs(c), exl) * Math.sign(c); y = p.yc - p.hh * Math.pow(-s, exl);
+      }
+      pts.push([x, y]);
+    }
+    return pts;
+  };
+  // x der Seitenwand in der Höhe y (für Türen, Schweller)
+  const sideX = (z, y) => {
+    const p = par(z), u = Math.max(-0.999, Math.min(0.999, (y - p.yc) / p.hh)), n = u >= 0 ? 4.5 : 6, v = Math.abs(u);
+    return p.w * Math.pow(1 - Math.pow(v, n), 1 / n) * (u > 0 ? 1 - tuck * v * v : 1);
+  };
+  const bodyPt = (z, th) => {
+    const p = par(z), c = Math.cos(th), s = Math.sin(th), e = s >= 0 ? ex : exl, v = Math.pow(Math.abs(s), e), u = Math.pow(Math.abs(c), e) * Math.sign(c);
+    return [p.w * u * (s > 0 ? 1 - tuck * v * v : 1), p.yc + (s >= 0 ? 1 : -1) * p.hh * v, z];
+  };
+  // Stationen: gerundete Enden, Radhäuser, Öffnungsgrenzen, Gleichmäßiges
+  const zset = [];
+  for (let k = 0; k <= 6; k++) { const a = Math.PI / 2 * k / 6; zset.push(0.5 * (1 - Math.cos(a)), L - 0.55 * (1 - Math.cos(a))); }
+  for (const zw of wheelZ) for (let k = -4; k <= 4; k++) zset.push(zw + 0.45 * Math.sin(Math.PI / 2 * k / 4));
+  for (const r of regs) zset.push(r.z0, r.z0 + 0.05, r.z0 + 0.1, r.z1 - 0.1, r.z1 - 0.05, r.z1);
+  for (let z = 0.8; z < L - 0.8; z += 0.45) zset.push(z);
+  const zs = zset.filter(z => z >= 0 && z <= L).sort((a, b) => a - b).filter((z, i, a) => i === 0 || z - a[i - 1] > 0.015);
+  const rings = zs.map(ring);
+  const bodyG = cgGrid(zs.length - 1, K, (i, j) => [rings[i][j][0], rings[i][j][1], zs[i]], true);
+  const cap = (r, z, dir) => {
+    const n = r.length, pos = new Float32Array((n + 1) * 3), nor = new Float32Array((n + 1) * 3), idx = []; let cy = 0, cx = 0;
+    r.forEach(([x, y], j) => { pos.set([x, y, z], j * 3); cy += y / n; cx += x / n; nor.set([0, 0, dir], j * 3); });
+    pos.set([cx, cy, z], n * 3); nor.set([0, 0, dir], n * 3);
+    for (let j = 0; j < n; j++) dir > 0 ? idx.push(n, j, (j + 1) % n) : idx.push(n, (j + 1) % n, j);
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setIndex(idx); return g;
+  };
+  const paintParts = [bodyG, cap(rings[0], 0, -1), cap(rings[zs.length - 1], L, 1)];
+  const glassParts = [], D = [], headP = [], tailP = [];
+
+  // ---- Kabine: Glasschale + Lackteile (Dach, Säulen) ----
+  if (hasCab) {
+    const zl = []; for (let k = 0; k <= 7; k++) zl.push(zr0 + s1 * k / 7); for (let k = 1; k <= 3; k++) zl.push(zrr + (zfr - zrr) * k / 4); for (let k = 0; k <= 7; k++) zl.push(zfr + s2 * k / 7);
+    const zc = zl.filter((z, i, a) => i === 0 || z - a[i - 1] > 0.01);
+    glassParts.push(cgOrient(cgGrid(zc.length - 1, M, (i, j) => cabPt(zc[i], Math.PI * j / M)), cgAxis(0.6)));
+    const roofTh = 0.95, off = 0.008;
+    paintParts.push(cgPatch(cabPt, Math.max(zr0 + 0.02, zrr - 0.07), zfr + 0.07, roofTh, Math.PI - roofTh, 10, 8, off));
+    const zB = zf0 - 1.1 - 0.06, pil = (pp, w0, w1) => {
+      const pts = []; for (let k = 0; k < pp.length - 1; k++) for (let q = 0; q < 4; q++) pts.push([pp[k][0] + (pp[k + 1][0] - pp[k][0]) * q / 4, pp[k][1] + (pp[k + 1][1] - pp[k][1]) * q / 4]); pts.push(pp[pp.length - 1]);
+      for (const m of [0, 1]) { const surf = m ? (a, b) => cabPt(a, Math.PI - b) : cabPt; paintParts.push(cgRibbon(surf, pts, w0, w1, off)); }
+    };
+    pil([[zf0 - 0.02, 0.1], [zf0 - s2 * 0.45, 0.4], [zfr + 0.04, roofTh + 0.05]], 0.045, 0.04);      // A-Säule
+    pil([[zr0 + 0.02, 0.1], [zr0 + s1 * 0.45, 0.4], [zrr - 0.04, roofTh + 0.05]], S.cw || 0.07, (S.cw || 0.07) * 0.9);          // C-Säule
+    if (zB > zrr + 0.3) pil([[zB, 0.05], [zB, 0.5], [zB, roofTh + 0.05]], 0.05, 0.045);             // B-Säule
+    // Seitliche Dachkante (Regenleiste)
+    pil([[zrr - 0.04, roofTh + 0.02], [(zrr + zfr) / 2, roofTh + 0.02], [zfr + 0.04, roofTh + 0.02]], 0.03, 0.03);
+    if (S.rack) { for (const sx of [1, -1]) D.push(cgBox(0.045, 0.04, zfr - zrr - 0.3, sx * (hw * S.wc * 0.62), S.roof + 0.03, (zrr + zfr) / 2, '#2a2b2e')); for (const zz of [zrr + 0.45, (zrr + zfr) / 2, zfr - 0.45]) D.push(cgBox(hw * S.wc * 1.28, 0.03, 0.04, 0, S.roof + 0.06, zz, '#2a2b2e')); }
+  }
+  // ---- Cabrio: Frontscheibe + Rahmen ----
+  let windshield = null;
+  if (S.open) {
+    const zb = zf0 - 0.02, zt = zb - 0.5, yb = top(zb) - 0.02, yt = yb + 0.34, wb = hw - 0.1, wt = hw - 0.17;
+    const gp = [[wb, yb, zb], [wt, yt, zt], [-wt, yt, zt], [-wb, yb, zb]];
+    const gg = new THREE.BufferGeometry(); gg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(gp.flat()), 3)); gg.setIndex([0, 1, 2, 0, 2, 3]); gg.computeVertexNormals();
+    glassParts.push(cgOrient(gg, () => [0, yb - 0.5, zb - 0.8], 1));
+    const bar = (a, b) => { const len = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]), g = new THREE.BoxGeometry(0.035, 0.035, len); g.deleteAttribute('uv'); const m = new THREE.Matrix4().lookAt(new THREE.Vector3(...a), new THREE.Vector3(...b), new THREE.Vector3(0, 1, 0)); g.applyMatrix4(m.setPosition((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2)); return colorize(g, '#c4c7cc'); };
+    D.push(bar([wb, yb, zb], [wt, yt, zt]), bar([-wb, yb, zb], [-wt, yt, zt]), bar([wt, yt, zt], [-wt, yt, zt]));
+  }
+  // ---- Radhäuser, Schweller, Unterboden ----
+  for (const zw of wheelZ) for (const sx of [1, -1]) {
+    const wg = cgGrid(6, 12, (i, j) => { const a = Math.PI * j / 12, x = sx * (hw - 0.52 + 0.5 * i / 6); return [x, 0.3 + 0.43 * Math.sin(a), zw + 0.43 * Math.cos(a)]; });
+    D.push(colorize(cgOrient(wg, (x, y, z) => [x, 0.3, zw], -1), '#17181a'));
+  }
+  D.push(cgBox(W * 0.6, 0.03, L - 1.5, 0, 0.29, L / 2, '#060607'));
+  for (const sx of [1, -1]) {
+    const sg = cgPatch((z, th) => { const q = bodyPt(z, th); return sx > 0 ? q : [-q[0], q[1], q[2]]; }, wheelZ[0] + 0.47, wheelZ[1] - 0.47, -1.0, -0.12, 6, 3, 0.014, 0.6);
+    D.push(colorize(sg, '#1b1c1f'));
+  }
+  // ---- Innenraum ----
+  for (const r of regs) {
+    const zA = r.z0 + 0.05, zZ = r.z1 - 0.05, nz = Math.max(2, Math.round((zZ - zA) / 0.35));
+    // Verkleidung: dieselbe U-Form wie die Karosserie, etwas nach innen versetzt
+    const lg = cgGrid(nz, 3, (i, j) => {
+      const z = zA + (zZ - zA) * i / nz, p = par(z), xo = p.w * 0.9, xi = Math.min(r.xin(z), xo - 0.05) - 0.012, yt = p.y1 - 0.004, yf = r.floor + 0.012;
+      const pt = [[xi, yt], [xi - 0.005, yf], [-(xi - 0.005), yf], [-xi, yt]][j];
+      return [pt[0], pt[1], z];
+    });
+    D.push(colorize(cgOrient(lg, (x, y, z) => [0, r.floor + 0.5, z], -1), r.col));
+  }
+  // Sitze, Armaturenbrett, Lenkrad
+  const hz = L - 1.95, seatCol = S.sporty ? '#8a5a38' : '#3a3b41';
+  const seat = (x, z, wid = 0.5) => { D.push(cgBox(wid, 0.08, 0.5, x, 0.5, z + 0.05, seatCol), cgBox(wid, 0.56, 0.11, x, 0.78, z - 0.22, seatCol, -0.16), cgBox(0.2, 0.15, 0.09, x, 1.12, z - 0.29, seatCol, -0.16)); };
+  if (hasCab || S.open) {
+    seat(0.4, hz); seat(-0.4, hz);
+    if (S.rear) { if (kind === 'limo') { D.push(cgBox(1.5, 0.08, 0.5, 0, 0.5, hz - 1.45, seatCol), cgBox(1.5, 0.56, 0.11, 0, 0.78, hz - 1.72, seatCol, -0.12)); } else { D.push(cgBox(1.35, 0.08, 0.5, 0, 0.5, hz - 0.85, seatCol), cgBox(1.35, 0.5, 0.11, 0, 0.76, hz - 1.12, seatCol, -0.2)); } }
+    const dz = zf0 - 0.17;
+    D.push(cgBox(W * 0.8, 0.16, 0.34, 0, 0.8, dz, '#232428'), cgBox(0.4, 0.1, 0.16, 0.4, 0.9, dz - 0.05, '#1a1b1e'), cgBox(0.12, 0.2, 0.5, 0, 0.62, hz + 0.1, '#1d1e22'));
+    const sw = new THREE.TorusGeometry(0.17, 0.018, 5, 12); sw.deleteAttribute('uv'); sw.rotateX(-1.0); sw.translate(0.4, 0.95, hz + 0.5); D.push(colorize(sw, '#17181a'));
+    D.push(cgBox(0.03, 0.03, 0.3, 0.4, 0.86, hz + 0.64, '#17181a', 0.5));
+    if (S.bulk) D.push(cgBox(W * 0.8, 1.0, 0.04, 0, 1.45, zr0 + 0.06, '#1d1e22'));
+  }
+  if (S.scoop) { const zq = zf0 + 0.55; D.push(cgBox(0.5, 0.05, 0.55, 0, top(zq) + 0.035, zq, '#141517'), cgBox(0.5, 0.035, 0.06, 0, top(zq) + 0.06, zq + 0.28, '#141517', -0.5)); }
+  // ---- Front / Heck ----
+  const fF = par(L), fR = par(0);
+  const face = (p, rear) => {
+    const zz = rear ? -0.006 : L + 0.006, place = (g, dz) => { if (rear) g.rotateY(Math.PI); g.translate(0, 0, zz + (rear ? -dz : dz)); return g; };
+    return { poly: (pts, col, dz = 0) => place(cgPoly(pts, 0, 1, col), dz) };
+  };
+  const ff = face(fF, false), fr = face(fR, true);
+  // Scheinwerfer + Rahmen
+  const hy = fF.yc + fF.hh * 0.05, hl = [[0.42 * fF.w, hy], [0.9 * fF.w, hy + fF.hh * 0.12], [0.92 * fF.w, hy + fF.hh * 0.7], [0.5 * fF.w, hy + fF.hh * 0.5]];
+  headP.push(ff.poly(hl, null, 0.004), ff.poly(cgMirrorPts(hl), null, 0.004));
+  const bz = pts => pts.map(([x, y]) => [x * 1.04, y + (y > hy + fF.hh * 0.3 ? 0.014 : -0.014)]);
+  D.push(ff.poly(bz(hl), '#222326'), ff.poly(cgMirrorPts(bz(hl)), '#222326'));
+  // Kühlergrill + Lufteinlass + Kennzeichen
+  const gy0 = fF.yc - fF.hh * 0.1, gy1 = fF.yc + fF.hh * 0.55, gx = 0.34 * fF.w;
+  D.push(cgBox(gx * 2, gy1 - gy0, 0.025, 0, (gy0 + gy1) / 2, L + 0.012, '#141517'));
+  for (let k = 0; k < 3; k++) D.push(cgBox(gx * 2, 0.012, 0.03, 0, gy0 + (gy1 - gy0) * (k + 1) / 4, L + 0.016, '#b9bcc2'));
+  D.push(cgBox(gx * 2 + 0.03, 0.018, 0.03, 0, gy1 + 0.005, L + 0.014, '#c4c7cc'), cgBox(gx * 2 + 0.03, 0.018, 0.03, 0, gy0 - 0.005, L + 0.014, '#c4c7cc'));
+  D.push(cgBox(fF.w * 1.5, fF.hh * 0.42, 0.03, 0, fF.yc - fF.hh * 0.62, L + 0.01, '#141517'));
+  D.push(cgBox(0.54, 0.14, 0.012, 0, fF.yc - fF.hh * 0.55, L + 0.022, '#1a1a1a'), cgBox(0.5, 0.1, 0.012, 0, fF.yc - fF.hh * 0.55, L + 0.03, '#ecebe4'));
+  D.push(cgBox(fF.w * 1.7, 0.05, 0.09, 0, fF.yc - fF.hh + 0.04, L - 0.01, '#141517'));
+  // Rücklichter + Kennzeichen + Stoßfänger
+  const ty = S.tail ? S.tail : [fR.yc + fR.hh * 0.05, fR.yc + fR.hh * 0.6];
+  const tl = [[0.45 * fR.w, ty[0]], [0.93 * fR.w, ty[0] + 0.01], [0.93 * fR.w, ty[1]], [0.5 * fR.w, ty[1] - 0.03]];
+  tailP.push(fr.poly(tl, null, 0.004), fr.poly(cgMirrorPts(tl), null, 0.004));
+  const tz = pts => pts.map(([x, y]) => [x * 1.04, y + (y > (ty[0] + ty[1]) / 2 ? 0.014 : -0.014)]);
+  D.push(fr.poly(tz(tl), '#222326'), fr.poly(cgMirrorPts(tz(tl)), '#222326'));
+  const py = Math.min(fR.yc - 0.02, ty[0] - 0.12);
+  D.push(cgBox(0.54, 0.14, 0.012, 0, py, -0.052, '#1a1a1a'), cgBox(0.5, 0.1, 0.012, 0, py, -0.06, '#ecebe4'));
+  D.push(cgBox(fR.w * 1.7, 0.2, 0.08, 0, fR.yc - fR.hh + 0.13, 0.0, '#141517'));
+  if (S.sporty) for (const sx of [1, -1]) { const e = new THREE.CylinderGeometry(0.045, 0.045, 0.14, 8); e.deleteAttribute('uv'); e.rotateX(Math.PI / 2); e.translate(sx * 0.55, 0.36, -0.06); D.push(colorize(e, '#b9bcc2')); }
+  if (kind === 'pickup') D.push(cgBox(W - 0.2, 0.03, 0.05, 0, 1.0, 0.02, '#c4c7cc'));
+
+  // ---- Türen (Lackschalen, folgen der Karosserieseite) ----
+  const zH = L - 1.25, doors = {};
+  for (const sd of [1, -1]) {
+    const px = hw - 0.02, nz = 6, ny = 4, y0d = 0.5;
+    const yT = z => { const p = par(z); return Math.min(p.yc + 0.66 * p.hh, p.y1 - 0.08); };
+    const surf = (i, j, off) => { const z = zH - 1.1 + 1.1 * i / nz, yd = y0d + (yT(z) - y0d) * j / ny; return [sd * (sideX(z, yd) + off - px), yd, z - zH]; };
+    const outer = cgGrid(nz, ny, (i, j) => surf(i, j, 0.012)), inner = cgGrid(nz, ny, (i, j) => surf(i, j, -0.05));
+    const ref = () => [-sd * 0.5, 0.72, -0.55];
+    cgOrient(outer, ref, 1); cgOrient(inner, ref, -1);
+    const edge = (fn, n) => cgOrient(cgGrid(n, 1, (i, j) => fn(i, j)), ref, 1);
+    const parts = [outer, inner,
+      edge((i, j) => surf(0, i, j ? -0.05 : 0.012), ny), edge((i, j) => surf(nz, ny - i, j ? -0.05 : 0.012), ny),
+      edge((i, j) => surf(nz - i, ny, j ? -0.05 : 0.012), nz), edge((i, j) => surf(i, 0, j ? -0.05 : 0.012), nz)];
+    // Griff + Spiegel
+    const hz2 = zH - 0.9 - zH, hy = yT(zH - 0.9) - 0.1, hx = sd * (sideX(zH - 0.9, hy) + 0.03 - px);
+    parts.push(cgBox(0.035, 0.03, 0.17, hx, hy, hz2));
+    const my = yT(zH) + 0.1, mz = -0.22, mx = sd * (sideX(zH - 0.22, yT(zH)) + 0.14 - px);
+    parts.push(cgBox(0.1, 0.1, 0.17, mx, my, mz), cgBox(0.1, 0.03, 0.05, sd * (sideX(zH - 0.22, yT(zH)) + 0.04 - px), my - 0.04, mz + 0.03));
+    doors[sd] = cgFin(parts);
+  }
+  // ---- Räder ----
+  const wheels = cgWheels();
+  if (S.cop) {
+    for (const sx of [1, -1]) D.push(colorize(cgPatch((z, th) => { const q = bodyPt(z, th); return sx > 0 ? q : [-q[0], q[1], q[2]]; }, zH - 2.35, zH - 1.2, -0.1, 0.6, 5, 4, 0.006, 0.6), '#ececec'));
+  }
+  const cen = g => g && g.translate(0, 0, -L / 2);
+  return carGeoCache[key] = { paint: cen(cgFin(paintParts)), glass: cen(cgFin(glassParts)), detail: cen(cgFin(D)), head: cen(cgFin(headP)), tail: cen(cgFin(tailP)), doors, wheelR: wheels.R, wheelL: wheels.L, top: S.open ? 1.32 : S.roof };
+}
+let cgWheelCache = null;
+function cgWheels() {
+  if (cgWheelCache) return cgWheelCache;
+  const rs = 0.944, lathe = (pts, seg, col) => { const g = new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r * rs, y)), seg); g.deleteAttribute('uv'); return colorize(g, col); };
+  const parts = [
+    lathe([[0.225, -0.11], [0.285, -0.125], [0.345, -0.1], [0.36, -0.04], [0.36, 0.04], [0.345, 0.1], [0.285, 0.125], [0.225, 0.11]], 18, '#141414'),
+    lathe([[0.215, -0.12], [0.205, -0.02], [0.215, 0.07], [0.235, 0.118]], 18, '#b9bcc2'),
+    lathe([[0.215, 0.075], [0.0, 0.075]], 18, '#25272b'),
+    lathe([[0.058, 0.09], [0.058, 0.11], [0, 0.115]], 8, '#c4c7cc'),
+  ];
+  for (let k = 0; k < 5; k++) { const a = k * Math.PI * 2 / 5, g = new THREE.BoxGeometry(0.048, 0.026, 0.18); g.deleteAttribute('uv'); g.translate(0, 0.094, 0.125); g.rotateY(a); parts.push(colorize(g, '#c4c7cc')); }
+  const base = mergeGeometries(parts), R = base.clone().rotateZ(-Math.PI / 2), Lg = base.clone().rotateZ(Math.PI / 2);
+  return cgWheelCache = { R, L: Lg };
+}
+
 const CAR_TYPES = {
-  sedan: { L: 4.6, W: 1.86, hs: 1, max: 38, acc: 13 }, coupe: { L: 4.4, W: 1.92, hs: 0.86, max: 48, acc: 19 },
-  suv: { L: 4.8, W: 2.0, hs: 1.25, max: 34, acc: 11 }, compact: { L: 3.9, W: 1.75, hs: 1.05, max: 32, acc: 11 },
-  police: { L: 4.7, W: 1.9, hs: 1, max: 44, acc: 17 },
+  sedan: { L: 4.6, W: 1.86, hs: 1, max: 38, acc: 13, kind: 'sedan' }, coupe: { L: 4.4, W: 1.92, hs: 0.86, max: 48, acc: 19, kind: 'coupe' },
+  suv: { L: 4.8, W: 2.0, hs: 1.25, max: 34, acc: 11, kind: 'suv' }, compact: { L: 3.9, W: 1.75, hs: 1.05, max: 32, acc: 11, kind: 'compact' },
+  police: { L: 4.7, W: 1.9, hs: 1, max: 44, acc: 17, kind: 'police' },
   pickup: { L: 5.3, W: 2.0, hs: 1.2, max: 36, acc: 12, kind: 'pickup' }, van: { L: 5.0, W: 2.0, hs: 1, max: 30, acc: 9, kind: 'van' },
   convertible: { L: 4.5, W: 1.9, hs: 0.9, max: 45, acc: 16, kind: 'convertible' },
-  italia: { L: 4.55, W: 1.95, hs: 0.82, max: 60, acc: 25, model: 'ferrari' }, concept: { L: 4.4, W: 2.0, hs: 0.86, max: 55, acc: 22, model: 'CarConcept' }, limo: { L: 6.3, W: 2.0, hs: 1.0, max: 36, acc: 10 }, muscle: { L: 4.8, W: 1.96, hs: 0.86, max: 50, acc: 20 },
+  italia: { L: 4.55, W: 1.95, hs: 0.82, max: 60, acc: 25, kind: 'coupe', model: 'ferrari' }, concept: { L: 4.4, W: 2.0, hs: 0.86, max: 55, acc: 22, kind: 'coupe', model: 'CarConcept' }, limo: { L: 6.3, W: 2.0, hs: 1.0, max: 36, acc: 10, kind: 'limo' }, muscle: { L: 4.8, W: 1.96, hs: 0.86, max: 50, acc: 20, kind: 'muscle' },
 };
-const TRAFFIC_TYPES = ['sedan', 'sedan', 'coupe', 'suv', 'compact', 'compact', 'pickup', 'pickup', 'van', 'convertible', 'muscle', 'suv'];
+const TRAFFIC_TYPES = ['sedan', 'sedan', 'coupe', 'suv', 'compact', 'compact', 'pickup', 'pickup', 'van', 'convertible', 'muscle', 'suv', 'sedan', 'coupe'];
 const CAR_COLORS = ['#b8b8b8', '#1c1c1c', '#f2f2f2', '#7d0f12', '#123d6b', '#2f5233', '#c9a227', '#5c5f63', '#a34a12', '#3a2f5c', '#0f5e63', '#d35d0e', '#d7c9a3', '#9c2a2a', '#e8e0d0', '#2a4a6a', '#556b2f', '#c0392b', '#7a8a9a', '#4a3a2a'];
 const cars = [];
+// Gemeinsame Materialien für Autoglas (echte Spiegelung + Durchsicht auf den Innenraum) und Details mit Vertexfarben
+let cgMatSet = null;
+function cgMats() {
+  return cgMatSet ||= {
+    glass: new THREE.MeshPhysicalMaterial({ color: 0x050a10, metalness: 0, roughness: 0.03, transparent: true, opacity: 0.58, depthWrite: false, envMapIntensity: 1.6, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendEquation: THREE.AddEquation, premultipliedAlpha: false }),
+    detail: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.15 }),
+  };
+}
+// Hero-Modelle: nur in Kameranähe (LOD) statt der prozeduralen Karosserie; Lack wird auf die Autofarbe umgefärbt
+const CG_HERO = { coupe: 'ferrari', convertible: 'ferrari', muscle: 'ferrari', sedan: 'CarConcept' };
+const CG_HERO_MAX = 6, CG_HERO_NEAR = 45, CG_HERO_FAR = 58;
+let cgHeroOn = 0;
+const cgPaintMats = new Map();
+function cgTintModel(mi, name, color) {
+  const tc = new THREE.Color(color), hex = tc.getHexString();
+  mi.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const src = o.material, ck = name + src.uuid + hex; let m = cgPaintMats.get(ck);
+    if (m === undefined) {
+      m = null;
+      if (name === 'ferrari') {
+        // Das Modell hat nur ein Paletten-Material: nur die roten Palettenpixel (Lack) werden auf die Fahrzeugfarbe umgefärbt
+        m = src.clone();
+        m.onBeforeCompile = sh => { sh.uniforms.uPaint = { value: tc }; sh.fragmentShader = 'uniform vec3 uPaint;\n' + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+          if (diffuseColor.r > 0.3 && diffuseColor.g < 0.03 && diffuseColor.b < 0.05) diffuseColor.rgb = uPaint * clamp(diffuseColor.r / 0.7, 0.7, 1.1);`); };
+        m.customProgramCacheKey = () => 'ferrariPaintU';
+      } else if (/^Paint 1/.test(src.name || '')) { m = src.clone(); m.color.copy(tc); }
+      cgPaintMats.set(ck, m);
+    }
+    if (m) o.material = m;
+  });
+}
+function cgSetProc(c, vis) { for (const o of c.procParts) o.visible = vis; for (const d of c.doors) d.pv.visible = vis; for (const w of c.wheels) w.visible = vis; }
+// Pro Auto und Frame: Hero-Modell nur für ruhende Autos in Kameranähe und nur bis CG_HERO_MAX gleichzeitig
+function cgLod(c, d) {
+  const h = c.hero; if (!h) return;
+  const calm = c.health > 0 && c.mode !== 'wreck' && !c.ownGeo && !c.taxi && c !== player.car && !c.npcSeq && Math.hypot(c.vx, c.vz) < (h.on ? 3 : 1.5) && c.doors.every(q => q.open === 0 && q.target === 0);
+  const want = calm && d < (h.on ? CG_HERO_FAR : CG_HERO_NEAR) && (h.on || cgHeroOn < CG_HERO_MAX);
+  if (want && !h.on) {
+    if (!h.mi) { h.mi = modelInstance(h.name, c.T.L, 'z'); if (!h.mi) { c.hero = null; return; } cgTintModel(h.mi, h.name, c.color); c.body.add(h.mi); }
+    h.mi.visible = true; cgSetProc(c, false); h.on = true; cgHeroOn++;
+  } else if (!want && h.on) { h.mi.visible = false; cgSetProc(c, true); h.on = false; cgHeroOn--; }
+  if (!h.on && h.mi && d > 120) { c.body.remove(h.mi); h.mi = null; }
+}
 function makeCar(type, color, x, z, yaw, mode) {
-  const T = CAR_TYPES[type], G = carGeos(T.L, T.W, T.hs, T.kind);
+  const T = CAR_TYPES[type], G = carGeos(T.L, T.W, T.hs, T.kind), CM = cgMats();
   const group = new THREE.Group(), body = new THREE.Group(); group.add(body);
   const pm = type === 'police' ? paint('#0d0e10') : paint(color);
-  const paintMesh = new THREE.Mesh(G.paint, pm);
-  const glass = new THREE.Mesh(G.glass, M.glass);
-  paintMesh.castShadow = glass.castShadow = true;
-  body.add(paintMesh, glass, new THREE.Mesh(G.trim, M.trim), new THREE.Mesh(G.head, M.head), new THREE.Mesh(G.tail, M.tail));
-  if (G.seat) body.add(new THREE.Mesh(G.seat, mat('#c8a882', { roughness: 0.6 })));
-  // Vordertüren mit Scharnier (links = Fahrer)
-  const Yh = y => 0.32 + (y - 0.32) * T.hs, zh = T.L / 2 - 1.25, doors = [];
+  const paintMesh = new THREE.Mesh(G.paint, pm), glass = new THREE.Mesh(G.glass, CM.glass), detail = new THREE.Mesh(G.detail, CM.detail);
+  paintMesh.castShadow = true; glass.renderOrder = 1;
+  body.add(paintMesh, glass, detail, new THREE.Mesh(G.head, M.head), new THREE.Mesh(G.tail, M.tail));
+  const procParts = body.children.slice();
+  // Vordertüren mit Scharnier (links = Fahrer): Lackschale folgt der Karosserieseite, Griff und Spiegel sind Teil der Tür
+  const zh = T.L / 2 - 1.25, doors = [];
   for (const side of [1, -1]) {
     const pv = new THREE.Group(); pv.position.set(side * (T.W / 2 - 0.02), 0, zh); body.add(pv);
-    const ph = Yh(0.96) - 0.38, pnl = new THREE.Mesh(new THREE.BoxGeometry(0.07, ph, 1.1), type === 'police' ? M.white : pm); pnl.position.set(side * 0.03, 0.38 + ph / 2, -0.55); pnl.castShadow = true; pv.add(pnl);
-    if (T.kind !== 'convertible') { const gh = Yh(1.36) - Yh(0.99), gl = new THREE.Mesh(new THREE.BoxGeometry(0.035, gh, 0.9), M.glass); gl.position.set(side * 0.02, Yh(0.99) + gh / 2, -0.6); pv.add(gl); }
-    const hd = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.18), M.trim); hd.position.set(side * 0.08, Yh(0.85), -0.85); pv.add(hd);
+    const pnl = new THREE.Mesh(G.doors[side], type === 'police' ? M.white : pm); pnl.castShadow = true; pv.add(pnl);
     doors.push({ pv, side, open: 0, target: 0 });
   }
   const wheels = [];
   for (const [wx, wz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-    const pivot = new THREE.Group(); pivot.position.set(wx * (T.W / 2 - 0.15), 0.36, wz * (T.L / 2 - 0.88));
-    const w = new THREE.Mesh(G.wheel, M.wheel); pivot.add(w); group.add(pivot); wheels.push(pivot);
+    const pivot = new THREE.Group(); pivot.position.set(wx * (T.W / 2 - 0.15), 0.34, wz * (T.L / 2 - 0.88));
+    const w = new THREE.Mesh(wx > 0 ? G.wheelR : G.wheelL, M.wheel); pivot.add(w); group.add(pivot); wheels.push(pivot);
   }
-  const car = { type, T, top: G.top, group, body, doors, driver: null, pitch: 0, roll: 0, av: 0, paintMesh, wheels, x, z, y: 0, yaw, vx: 0, vz: 0, steer: 0, spin: 0, health: 100, mode, smoke: 0,
+  const car = { type, T, top: G.top, group, body, doors, driver: null, pitch: 0, roll: 0, av: 0, paintMesh, wheels, x, z, y: 0, yaw, vx: 0, vz: 0, steer: 0, spin: 0, health: 100, mode, smoke: 0, color, procParts,
     ai: { dir: 0, laneC: 0, nextK: 0, decided: -99, turn: null, speed: 0, stuck: 0, rev: 0, knockX: 0, knockZ: 0 } };
   if (type === 'police') {
-    const doorG = new THREE.PlaneGeometry(1.6, 0.42);
-    for (const s of [1, -1]) { const d = new THREE.Mesh(doorG, M.white); d.rotation.y = s * Math.PI / 2; d.position.set(s * (T.W / 2 + 0.005), 0.66, -0.9); body.add(d); }
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.14, 0.3), M.trim); bar.position.set(0, G.top + 0.12, -0.2);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.14, 0.3), M.trim); bar.position.set(0, G.top + 0.07, -0.2);
     const red = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.26), M.copRed); red.position.set(0.28, G.top + 0.2, -0.2);
     const blue = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.26), M.copBlue); blue.position.set(-0.28, G.top + 0.2, -0.2);
     body.add(bar, red, blue);
@@ -1247,20 +1898,10 @@ function makeCar(type, color, x, z, yaw, mode) {
       body.children.forEach(o => { if (o !== mi && o.isMesh) o.visible = false; });
       for (const d of doors) d.pv.children.forEach(o => o.visible = false);
       for (const w of wheels) w.children[0].visible = false;
-      if (T.model === 'ferrari') {
-        // Das Modell hat nur ein Paletten-Material: nur die roten Palettenpixel (Lack) werden auf die Fahrzeugfarbe umgefärbt
-        const tc = new THREE.Color(color), tv = `vec3(${tc.r.toFixed(4)}, ${tc.g.toFixed(4)}, ${tc.b.toFixed(4)})`, key = 'ferrariPaint' + tc.getHexString();
-        mi.traverse(o => {
-          if (!o.isMesh || !o.material) return;
-          const fm = o.material.clone();
-          fm.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
-            if (diffuseColor.r > 0.3 && diffuseColor.g < 0.03 && diffuseColor.b < 0.05) diffuseColor.rgb = ${tv} * clamp(diffuseColor.r / 0.7, 0.7, 1.1);`); };
-          fm.customProgramCacheKey = () => key; o.material = fm;
-        });
-      }
+      if (T.model === 'ferrari') cgTintModel(mi, 'ferrari', color);
       body.add(mi); car.model = mi;
     }
-  }
+  } else if (CG_HERO[type] && ASSETS.models[CG_HERO[type]] && (type !== 'sedan' || Math.random() < 0.5)) car.hero = { name: CG_HERO[type], on: false, mi: null };
   scene.add(group); cars.push(car); syncCar(car);
   return car;
 }
@@ -1270,7 +1911,7 @@ function syncCar(c) {
   for (const d of c.doors) { if (d.open !== d.target) { d.open += clamp(d.target - d.open, -0.05, 0.05); d.pv.rotation.y = -d.side * 1.15 * smooth(0, 1, d.open); } }
   for (let i = 0; i < 4; i++) { c.wheels[i].children[0].rotation.x = c.spin; if (i < 2) c.wheels[i].rotation.y = c.steer * 0.6; }
 }
-function removeCar(c) { if (c.ownGeo) c.paintMesh.geometry.dispose(); if (c.driver && c.driver !== player.h) disposeHuman(c.driver); scene.remove(c.group); cars.splice(cars.indexOf(c), 1); }
+function removeCar(c) { if (c.hero?.on) cgHeroOn--; if (c.ownGeo) c.paintMesh.geometry.dispose(); if (c.driver && c.driver !== player.h) disposeHuman(c.driver); scene.remove(c.group); cars.splice(cars.indexOf(c), 1); }
 const carLocal = (c, lx, lz) => { const s = Math.sin(c.yaw), co = Math.cos(c.yaw); return [c.x + lx * co + lz * s, c.z - lx * s + lz * co]; };
 const doorPoint = (c, side = 1) => carLocal(c, side * (c.T.W / 2 + 0.7), c.T.L / 2 - 1.85);
 const seatLocal = c => [0.4, 0.04, c.T.L / 2 - 1.95];
@@ -1300,6 +1941,10 @@ function driveCar(c, throttle, steerIn, hand, dt) {
   carWorldCollide(c);
   c.y = lerp(c.y, groundH(c.x, c.z), Math.min(1, dt * 10));
   c.speedF = vf;
+  // NaN-Schutz: ein einziger NaN-Wert in Höhe/Federung/Rad würde die Kamera (Ziel = Auto) und damit das ganze Bild schwarz machen
+  if (!Number.isFinite(c.y)) c.y = Number.isFinite(c.ly) ? c.ly : 0; else c.ly = c.y;
+  if (!Number.isFinite(c.speedF)) c.speedF = 0;
+  for (const k of ['pitch', 'roll', 'pv', 'rv', 'spin']) if (!Number.isFinite(c[k])) c[k] = 0;
 }
 const CAR_MASS = { sedan: 1500, coupe: 1350, suv: 2100, compact: 1100, police: 1750, pickup: 2050, van: 2250, convertible: 1400, muscle: 1650, limo: 2600 };
 // Fahrphysik: Reifenkräfte (Pacejka-ähnlich) an Vorder- und Hinterachse, Lastverlagerung, Gier-Trägheit
@@ -1336,6 +1981,7 @@ function carStep(c, thr, steerIn, hand, dt) {
   if (![c.vx, c.vz, c.x, c.z, c.av, c.yaw].every(Number.isFinite)) {
     c.vx = 0; c.vz = 0; c.av = 0; if (!Number.isFinite(c.yaw)) c.yaw = c.lyaw || 0;
     c.x = Number.isFinite(c.lx) ? c.lx : 0; c.z = Number.isFinite(c.lz) ? c.lz : 0;
+    c.steer = 0; c.lastAx = 0; c.lastAy = 0; // sonst bleibt ein NaN in der Lenkung/Beschleunigung für immer hängen
   } else { c.lx = c.x; c.lz = c.z; c.lyaw = c.yaw; }
 }
 function carWorldCollide(c) {
@@ -1732,25 +2378,362 @@ function initInteriorLights() {
   for (let i = 0; i < 6; i++) { const l = new THREE.PointLight(0xffd0a0, 0, 30, 2); l.userData.on = false; scene.add(l); LAMP_POOL.push(l); } // Laternenpool (ohne Schatten)
 }
 let ITEX = null;
-// Verpackungen: Textur-Atlas mit 32 bedruckten Produktfronten (Marken aus Los Santos)
-const PROD_SIZES = [[0.15, 0.22, 0.06], [0.06, 0.1, 0.06, true], [0.07, 0.2, 0.07, true], [0.12, 0.17, 0.08], [0.18, 0.09, 0.12], [0.09, 0.14, 0.09, true], [0.14, 0.25, 0.06], [0.08, 0.15, 0.08]];
-let PRODTEX = null;
+// ==== PRODKIT BEGIN ====
+// Produkt-Kit für Supermarkt/Tankstelle: Etiketten-Atlas, Produktgeometrien (Flaschen, Dosen, Kartons, Tüten, Gläser),
+// Regal-Bestückung (Facings), Obst-/Fisch-Instanzen aus echten Modellen. Alles wird je Etage in wenige InstancedMeshes gebaut.
+const PA = 2048, PC = 256, PSTRIP = 24, PART_V = (PC - PSTRIP) / PC; // Atlas 8x8 Zellen à 256 px; oben 24 px Farbstreifen für Seiten/Deckel
+let PRODTEX = null, PRODMAT = null, PRODGEO = null;
+const lathePts = a => a.map(([r, y]) => new THREE.Vector2(r, y));
+// Typen: Maße in m (w,h,d), Etiketten-Fläche in mm (Umfang x Höhe bzw. Front), Profil für Drehkörper
+const PTYPES = {
+  can:    { w: 0.066, h: 0.12, d: 0.066, art: [207, 120], lathe: [[0, 0], [0.0285, 0], [0.033, 0.01], [0.033, 0.11], [0.0285, 0.12], [0, 0.12]], seg: 10, rows: 2 },
+  tin:    { w: 0.074, h: 0.105, d: 0.074, art: [232, 105], lathe: [[0, 0], [0.0345, 0], [0.037, 0.005], [0.037, 0.1], [0.0345, 0.105], [0, 0.105]], seg: 10, rows: 2 },
+  bottle: { w: 0.064, h: 0.205, d: 0.064, art: [201, 205], lathe: [[0, 0], [0.028, 0], [0.032, 0.012], [0.032, 0.125], [0.0135, 0.175], [0.0135, 0.188], [0.0158, 0.19], [0.0158, 0.205], [0, 0.205]], seg: 10, rows: 2 },
+  beer:   { w: 0.071, h: 0.234, d: 0.071, art: [223, 234], lathe: [[0, 0], [0.032, 0], [0.0355, 0.008], [0.0355, 0.13], [0.0125, 0.2], [0.0125, 0.222], [0.0165, 0.223], [0.0165, 0.234], [0, 0.234]], seg: 10, rows: 2 },
+  jar:    { w: 0.077, h: 0.1, d: 0.077, art: [239, 100], lathe: [[0, 0], [0.036, 0], [0.038, 0.004], [0.038, 0.08], [0.0385, 0.084], [0.0385, 0.1], [0, 0.1]], seg: 10, rows: 2 },
+  box:    { w: 0.20, h: 0.30, d: 0.07, art: [200, 300], rows: 2 },
+  box2:   { w: 0.12, h: 0.17, d: 0.05, art: [120, 170], rows: 2 },
+  bag:    { w: 0.20, h: 0.30, d: 0.06, art: [200, 300], rows: 2 },
+  carton: { w: 0.07, h: 0.242, d: 0.07, art: [70, 180], rows: 2 },
+  tag:    { w: 0.06, h: 0.028, d: 0.004, art: [60, 28], rows: 1 },
+};
+// Produkte: [Typ, Marke, Zeile 2, Menge, Bild, Hauptfarbe, Zweitfarbe, Akzent, Textfarbe, Optionen]
+const PDEFS = {
+  ecola:    ['can', 'eCola', 'ZERO ZUCKER', '330 ml', 'bubbles', '#d11a24', '#8f0b14', '#ffffff', '#ffffff'],
+  sprunk:   ['can', 'Sprunk', 'LEMON-LIME', '330 ml', 'bubbles', '#2fa84a', '#126b2c', '#d8ff4a', '#ffffff'],
+  pisswas:  ['can', 'Pißwasser', 'PREMIUM LAGER', '500 ml', 'star', '#e8c32a', '#b8860b', '#1a1a1a', '#1a1a1a', { sc: 1.12 }],
+  loggerc:  ['can', 'Logger', 'DARK BEER', '500 ml', 'leaf', '#3a2a1a', '#1c120a', '#d6a640', '#f0d9a0', { sc: 1.12 }],
+  meteor:   ['can', 'Meteorite', 'ENERGY', '250 ml', 'bolt', '#14224d', '#070d24', '#ffd21f', '#ffffff'],
+  ego:      ['can', 'Ego Chaser', 'ENERGY DRINK', '250 ml', 'bolt', '#151515', '#000000', '#ff7a1a', '#ffffff'],
+  raineS:   ['can', 'Raine', 'SPARKLING', '330 ml', 'drop', '#7ec8f0', '#2f8fd0', '#ffffff', '#0a3c66'],
+  ofizz:    ['can', 'O-Fizz', 'ORANGE', '330 ml', 'orange', '#ff9a1f', '#d96a00', '#ffffff', '#ffffff'],
+  tomaten:  ['tin', 'Tomaten', 'GESCHÄLT', '400 g', 'tomato', '#d83a2a', '#a82418', '#fff3d6', '#ffffff'],
+  mais:     ['tin', 'Mais', 'ZUCKERMAIS', '340 g', 'corn', '#f2c21a', '#c99a08', '#2f8f3a', '#2b2b2b'],
+  bohnen:   ['tin', 'Bohnen', 'WEISSE BOHNEN', '400 g', 'bean', '#3d8f43', '#1f6a28', '#fff3d6', '#ffffff'],
+  thunfisch:['tin', 'Thunfisch', 'IN OLIVENÖL', '185 g', 'fish', '#2a64b8', '#18438a', '#fff3d6', '#ffffff'],
+  ecola15:  ['bottle', 'eCola', 'ORIGINAL', '1,5 L', 'bubbles', '#d11a24', '#2a0f0a', '#ffffff', '#ffffff', { sc: 1.45, cap: '#d11a24' }],
+  sprunk15: ['bottle', 'Sprunk', 'LEMON-LIME', '1,5 L', 'bubbles', '#2fa84a', '#cfeab0', '#d8ff4a', '#ffffff', { sc: 1.45, cap: '#2fa84a' }],
+  raine15:  ['bottle', 'Raine', 'MINERALWASSER', '1,5 L', 'drop', '#2f8fd0', '#d6ecf7', '#ffffff', '#ffffff', { sc: 1.45, cap: '#2f8fd0' }],
+  raineP:   ['bottle', 'Raine', 'STILL', '0,5 L', 'drop', '#4aa8e0', '#d6ecf7', '#ffffff', '#ffffff', { cap: '#ffffff' }],
+  ecolaP:   ['bottle', 'eCola', 'ORIGINAL', '0,5 L', 'bubbles', '#d11a24', '#2a0f0a', '#ffffff', '#ffffff', { cap: '#d11a24' }],
+  osaft:    ['bottle', 'O-Saft', 'ORANGE 100%', '1 L', 'orange', '#ff8f1a', '#ffb13a', '#2f9a3a', '#ffffff', { sc: 1.25, cap: '#ff8f1a' }],
+  eistee:   ['bottle', 'Eistee', 'PFIRSICH', '1 L', 'leaf', '#e8742a', '#c98a3a', '#2f9a3a', '#ffffff', { sc: 1.25, cap: '#e8742a' }],
+  pisswasb: ['beer', 'Pißwasser', 'PREMIUM LAGER', '0,5 L', 'star', '#f2d23a', '#6b3a10', '#1a1a1a', '#1a1a1a'],
+  loggerb:  ['beer', 'Logger', 'DARK BEER', '0,5 L', 'leaf', '#2c2c2c', '#2a1608', '#d6a640', '#f0d9a0'],
+  egob:     ['beer', 'Ego Chaser', 'IPA', '0,5 L', 'bolt', '#ff7a1a', '#1d3a1d', '#151515', '#151515'],
+  kaffee:   ['jar', 'Bean Machine', 'KAFFEE GOLD', '200 g', 'coffee', '#5a2d12', '#3a1c0a', '#d6a640', '#fff1d0', { lid: '#d6a640' }],
+  erdnuss:  ['jar', 'Erdnussbutter', 'CREMIG', '350 g', 'nut', '#c9302c', '#b87a3a', '#f4e3b0', '#ffffff', { lid: '#c9302c' }],
+  honig:    ['jar', 'Honig', 'BLÜTENHONIG', '500 g', 'hex', '#f6e3a0', '#e0900a', '#7a4a10', '#7a4a10', { lid: '#7a4a10' }],
+  gurken:   ['jar', 'Gurken', 'SÜSS-SAUER', '720 ml', 'leaf', '#4a9a3a', '#b9c96a', '#fff3d6', '#ffffff', { lid: '#3a7a2a' }],
+  marmel:   ['jar', 'Erdbeer', 'KONFITÜRE', '340 g', 'berry', '#fff3f0', '#b8142a', '#d83a4a', '#8a0f1e', { lid: '#d83a4a' }],
+  ketchup:  ['jar', 'Ketchup', 'ROT & WÜRZIG', '400 g', 'tomato', '#d83a2a', '#b01a14', '#fff3d6', '#ffffff', { lid: '#2b2b2b' }],
+  crunchy:  ['box', 'Crunchy Flakes', 'KNUSPER-MAIS', '500 g', 'bowl', '#f2a81a', '#e8641a', '#2a8fd0', '#ffffff'],
+  choco:    ['box', 'Choco Bombs', 'KAKAO-KISSEN', '375 g', 'bowl', '#6b3a1a', '#3a1c0a', '#e8a21a', '#ffffff'],
+  hafer:    ['box', 'Haferflocken', 'ZARTE FLOCKEN', '500 g', 'leaf', '#e8d8a8', '#c4a860', '#2f8f3a', '#4a3010'],
+  cluckin:  ['box', 'Cluckin Bell', 'CRISPY NUGGETS', '450 g', 'drum', '#e8201a', '#a50f0a', '#ffd21f', '#ffffff'],
+  pasta:    ['box', 'Pasta Bella', 'SPAGHETTI N°5', '500 g', 'noodle', '#2a8f4a', '#16652e', '#f2c21a', '#ffffff'],
+  taco:     ['box', 'Taco Bomb', 'TACO KIT', '300 g', 'chip', '#8f2fd0', '#561a8a', '#ffd21f', '#ffffff'],
+  kraecker: ['box2', 'Kräcker', 'MIT MEERSALZ', '200 g', 'chip', '#c8742a', '#8f4a14', '#5a2a0a', '#ffffff'],
+  tee:      ['box2', 'Pfefferminz', 'TEE · 20 BEUTEL', '40 g', 'leaf', '#2a9a8a', '#16685c', '#0f4a40', '#ffffff'],
+  reis:     ['box2', 'Reis Natur', 'LANGKORN', '1 kg', 'corn', '#e8e0c8', '#b8a870', '#c9302c', '#4a3010'],
+  seife:    ['box2', 'Sauber+', 'SEIFE · 4 STÜCK', '4 x 90 g', 'hex', '#4aa8e0', '#2a6fb8', '#1a4a8a', '#ffffff'],
+  phat:     ['bag', 'Phat Chips', 'SALZ', '175 g', 'chip', '#f2c21a', '#e8901a', '#d11a24', '#d11a24'],
+  phat2:    ['bag', 'Phat Chips', 'PAPRIKA', '175 g', 'chip', '#d11a24', '#8f0b14', '#f2c21a', '#ffffff'],
+  erdn:     ['bag', 'Erdnüsse', 'GESALZEN', '250 g', 'nut', '#b8742a', '#7a4a14', '#5a3a10', '#ffffff'],
+  gummi:    ['bag', 'Gummibären', 'FRUCHTMIX', '200 g', 'bear', '#e8307a', '#a8145a', '#ffd21f', '#ffffff'],
+  toast:    ['bag', 'Toastbrot', 'VOLLKORN', '500 g', 'bread', '#c89a5a', '#8a5a24', '#6a3a14', '#ffffff'],
+  tacochip: ['bag', 'Taco Chips', 'NACHO CHEESE', '200 g', 'chip', '#ff7a1a', '#c94a0a', '#ffd21f', '#ffffff'],
+  milch:    ['carton', 'Frische Milch', '3,5 % FETT', '1 L', 'milk', '#f4f8ff', '#cfe0f5', '#2a64b8', '#1f4a8f', { sc: 1.12 }],
+  milch2:   ['carton', 'Milch', 'FETTARM 1,5 %', '1 L', 'milk', '#e8f4ff', '#b8dcf5', '#2fa84a', '#16652e', { sc: 1.12 }],
+  osaftc:   ['carton', 'O-Saft', '100 % FRUCHT', '1 L', 'orange', '#ffb13a', '#ff8f1a', '#2f9a3a', '#ffffff', { sc: 1.12 }],
+  apfel:    ['carton', 'Apfelsaft', 'NATÜRLICH TRÜB', '1 L', 'apple', '#f2e08a', '#b8c93a', '#c9302c', '#4a3010', { sc: 1.12 }],
+  sahne:    ['carton', 'Sahne', '30 % FETT', '250 ml', 'milk', '#fff3e0', '#f2d8a8', '#c9302c', '#8a0f1e', { sc: 0.8 }],
+};
+const PKEYS = Object.keys(PDEFS), PCELL = {}; PKEYS.forEach((k, i) => { PCELL[k] = i; });
+const PTAG0 = 56, PRICES = ['0,79', '0,99', '1,29', '1,49', '1,99', '2,49', '2,99', '3,49'];
+const PD = k => { const a = PDEFS[k], T = PTYPES[a[0]], o = a[9] || {}, sc = o.sc || 1; return { id: k, t: a[0], brand: a[1], sub: a[2], vol: a[3], pic: a[4], c1: a[5], c2: a[6], c3: a[7], tx: a[8], cap: o.cap, lid: o.lid, sc, w: T.w * sc, h: T.h * sc, d: T.d * sc, T }; };
+const PDC = {}; PKEYS.forEach(k => { PDC[k] = PD(k); });
+// Regal-Kategorien: je Ebene (unten -> oben) eine Liste erlaubter Produkte
+const PCATS = {
+  soda:   [['ecola15', 'sprunk15', 'ecola15', 'osaft'], ['ecola', 'sprunk', 'ecolaP', 'ofizz', 'raineS'], ['meteor', 'ego', 'ecola', 'sprunk', 'ofizz'], ['eistee', 'osaft', 'ecolaP', 'raineP']],
+  water:  [['raine15', 'raine15', 'sprunk15'], ['raine15', 'raineP', 'raineP'], ['raineP', 'WB', 'raineS', 'WB'], ['WB', 'raineP', 'WB']],
+  beer:   [['pisswasb', 'loggerb', 'egob'], ['pisswasb', 'loggerb', 'egob', 'pisswas'], ['pisswas', 'loggerc', 'pisswasb', 'loggerc'], ['loggerc', 'pisswas', 'meteor']],
+  snack:  [['phat', 'phat2', 'tacochip', 'toast'], ['phat', 'phat2', 'erdn', 'gummi'], ['gummi', 'erdn', 'kraecker', 'tacochip'], ['kraecker', 'gummi', 'erdn']],
+  cereal: [['hafer', 'crunchy', 'choco', 'pasta'], ['crunchy', 'choco', 'hafer', 'cluckin'], ['choco', 'crunchy', 'taco', 'cluckin'], ['taco', 'choco', 'crunchy']],
+  canned: [['tomaten', 'bohnen', 'mais', 'thunfisch'], ['mais', 'tomaten', 'thunfisch', 'bohnen'], ['gurken', 'ketchup', 'tomaten'], ['marmel', 'gurken', 'ketchup']],
+  dairy:  [['milch', 'milch2', 'osaftc', 'apfel'], ['milch', 'milch2', 'sahne', 'osaftc'], ['apfel', 'osaftc', 'sahne', 'milch'], ['sahne', 'apfel', 'milch2']],
+  pantry: [['reis', 'pasta', 'hafer', 'tee'], ['kaffee', 'honig', 'erdnuss', 'marmel'], ['erdnuss', 'honig', 'kaffee', 'marmel'], ['tee', 'seife', 'kraecker', 'reis']],
+};
+const PCOLD = ['ecola', 'sprunk', 'meteor', 'ego', 'raineS', 'ofizz', 'pisswas', 'ecolaP', 'raineP', 'osaftc', 'milch', 'apfel', 'pisswasb', 'loggerb'];
+
+// ---------- Etiketten ----------
+const gradv = (c, x0, y0, x1, y1, a, b) => { const g = c.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, a); g.addColorStop(1, b); return g; };
+const ptxt = (c, s, x, y, maxW, px, col, stroke, font = '900') => {
+  const f = p => `${font} ${p}px "Arial Black","Helvetica Neue",Arial,sans-serif`; c.font = f(px);
+  const w = c.measureText(s).width; if (w > maxW) c.font = f(px * maxW / w);
+  c.lineJoin = 'round'; if (stroke) { c.lineWidth = stroke[1]; c.strokeStyle = stroke[0]; c.strokeText(s, x, y); }
+  c.fillStyle = col; c.fillText(s, x, y);
+};
+const pbarcode = (c, x, y, w, h) => { c.fillStyle = '#fff'; c.fillRect(x, y, w, h); c.fillStyle = '#111'; let p = x + 2; for (let i = 0; p < x + w - 2; i++) { const bw = 0.5 + ((i * 7) % 3) * 0.45; c.fillRect(p, y + 2, bw, h - 4 - (i % 9 === 0 ? 0 : 0)); p += bw + 0.5 + ((i * 5) % 2) * 0.4; } };
+const pnutri = (c, x, y, w, col) => { c.fillStyle = col; for (let i = 0; i < 6; i++) c.fillRect(x, y + i * 3.2, w * (0.55 + ((i * 3) % 4) * 0.1), 1.1); };
+function picon(c, n, x, y, s) { // einfache Vektor-Motive, zentriert, Kantenlänge s
+  c.save(); c.translate(x, y); c.scale(s / 100, s / 100); c.lineJoin = 'round';
+  const circ = (cx, cy, r, f) => { c.fillStyle = f; c.beginPath(); c.arc(cx, cy, r, 0, 7); c.fill(); };
+  const ell = (cx, cy, rx, ry, f, rot = 0) => { c.fillStyle = f; c.beginPath(); c.ellipse(cx, cy, rx, ry, rot, 0, 7); c.fill(); };
+  if (n === 'bubbles') { for (const [a, b, r] of [[-20, 10, 22], [18, -14, 16], [24, 28, 11], [-30, -28, 9], [2, 40, 8], [0, -34, 7]]) { circ(a, b, r, 'rgba(255,255,255,.28)'); c.strokeStyle = 'rgba(255,255,255,.85)'; c.lineWidth = 4; c.beginPath(); c.arc(a, b, r, 0, 7); c.stroke(); } }
+  else if (n === 'drop') { c.fillStyle = '#fff'; c.beginPath(); c.moveTo(0, -46); c.bezierCurveTo(34, -2, 40, 18, 28, 34); c.bezierCurveTo(14, 54, -14, 54, -28, 34); c.bezierCurveTo(-40, 18, -34, -2, 0, -46); c.fill(); c.fillStyle = 'rgba(90,170,230,.55)'; c.beginPath(); c.arc(-8, 22, 14, 0, 7); c.fill(); }
+  else if (n === 'bolt') { c.fillStyle = '#ffd21f'; c.strokeStyle = '#000'; c.lineWidth = 4; c.beginPath(); c.moveTo(10, -50); c.lineTo(-26, 6); c.lineTo(-2, 6); c.lineTo(-12, 50); c.lineTo(28, -12); c.lineTo(4, -12); c.closePath(); c.fill(); c.stroke(); }
+  else if (n === 'star') { c.fillStyle = '#c9302c'; c.beginPath(); for (let i = 0; i < 10; i++) { const a = i * Math.PI / 5 - Math.PI / 2, r = i % 2 ? 20 : 46; c.lineTo(Math.cos(a) * r, Math.sin(a) * r); } c.closePath(); c.fill(); circ(0, 0, 12, '#fff'); }
+  else if (n === 'orange') { circ(0, 4, 40, '#ff8f1a'); circ(0, 4, 33, '#ffb13a'); c.fillStyle = '#ff8f1a'; for (let i = 0; i < 8; i++) { c.save(); c.translate(0, 4); c.rotate(i * Math.PI / 4); c.fillRect(-1.5, 0, 3, 31); c.restore(); } ell(14, -40, 18, 8, '#2f9a3a', -0.5); }
+  else if (n === 'tomato') { circ(0, 8, 40, '#e0301e'); circ(-12, -4, 12, 'rgba(255,255,255,.3)'); c.fillStyle = '#2f9a3a'; c.beginPath(); for (let i = 0; i < 10; i++) { const a = i * Math.PI / 5, r = i % 2 ? 6 : 22; c.lineTo(Math.cos(a) * r, -30 + Math.sin(a) * r * 0.5); } c.closePath(); c.fill(); }
+  else if (n === 'corn') { ell(0, 0, 24, 46, '#f2c21a'); c.fillStyle = '#d9a208'; for (let i = -3; i <= 3; i++) for (let j = -5; j <= 5; j++) c.fillRect(i * 6.5 - 2, j * 8 - 2.5, 4, 5); ell(-22, 18, 16, 38, '#5fb04a', -0.35); ell(22, 18, 16, 38, '#4a9a3a', 0.35); }
+  else if (n === 'bean') { for (const [a, b, r] of [[-22, -14, -0.6], [18, -18, 0.4], [-8, 14, 0.2], [26, 18, -0.5]]) { ell(a, b, 14, 24, '#f4ead0', r); ell(a + 3, b - 3, 4, 8, 'rgba(255,255,255,.7)', r); } }
+  else if (n === 'fish') { ell(-6, 0, 38, 20, '#9fc0e0'); c.fillStyle = '#9fc0e0'; c.beginPath(); c.moveTo(28, 0); c.lineTo(52, -22); c.lineTo(52, 22); c.fill(); circ(-26, -4, 4, '#111'); c.fillStyle = '#2a64b8'; c.fillRect(-4, -20, 6, 40); }
+  else if (n === 'bowl') { ell(0, 14, 44, 18, '#f4f4f4'); c.fillStyle = '#f4f4f4'; c.beginPath(); c.moveTo(-44, 14); c.quadraticCurveTo(0, 74, 44, 14); c.fill(); c.fillStyle = '#e8641a'; for (const [a, b] of [[-26, 4], [-10, -4], [10, -6], [26, 4], [0, 8], [-18, 12], [18, 12], [-30, -6], [32, -8]]) { ell(a, b, 9, 7, '#f0a830', a * 0.05); } ell(0, -26, 22, 6, 'rgba(255,255,255,.55)'); circ(-14, -28, 5, '#f4f4f4'); circ(10, -30, 4, '#f4f4f4'); }
+  else if (n === 'milk') { c.fillStyle = '#fff'; c.beginPath(); c.moveTo(-44, 24); c.bezierCurveTo(-44, -8, -20, -40, -8, -6); c.bezierCurveTo(0, -46, 22, -40, 20, -4); c.bezierCurveTo(30, -26, 48, -10, 44, 24); c.bezierCurveTo(30, 44, -30, 44, -44, 24); c.fill(); circ(-18, 16, 5, 'rgba(120,170,230,.5)'); circ(10, 20, 4, 'rgba(120,170,230,.5)'); circ(26, 8, 3, 'rgba(120,170,230,.5)'); }
+  else if (n === 'chip') { for (const [a, b, r] of [[-22, -14, -0.4], [20, -10, 0.5], [0, 22, 0.1]]) { c.save(); c.translate(a, b); c.rotate(r); ell(0, 0, 30, 24, '#ffd54a'); ell(-4, -3, 22, 16, '#f2b823'); circ(-8, -4, 2.5, '#d9961a'); circ(8, 6, 2.5, '#d9961a'); circ(4, -8, 2, '#d9961a'); c.restore(); } }
+  else if (n === 'nut') { for (const [a, b, r] of [[-20, -10, -0.5], [18, -16, 0.6], [-4, 18, 0.1], [26, 20, -0.8]]) { ell(a, b, 22, 15, '#d8a864', r); ell(a - 2, b - 2, 18, 10, '#e8c080', r); c.strokeStyle = '#a8742a'; c.lineWidth = 2; c.beginPath(); c.moveTo(a - 12, b); c.lineTo(a + 12, b); c.stroke(); } }
+  else if (n === 'bear') { for (const [a, b, col] of [[-22, 6, '#ff3a5a'], [24, 10, '#ffd21f']]) { circ(a, b, 22, col); circ(a - 16, b - 22, 9, col); circ(a + 16, b - 22, 9, col); ell(a, b + 5, 12, 9, 'rgba(255,255,255,.35)'); circ(a - 7, b - 4, 3, '#111'); circ(a + 7, b - 4, 3, '#111'); circ(a, b + 6, 3, '#111'); } circ(0, -22, 18, '#3ac04a'); circ(-13, -38, 7, '#3ac04a'); circ(13, -38, 7, '#3ac04a'); }
+  else if (n === 'bread') { c.fillStyle = '#d8a458'; c.beginPath(); c.roundRect(-44, -14, 88, 56, 14); c.fill(); c.beginPath(); c.arc(-24, -14, 20, Math.PI, 0); c.arc(24, -14, 20, Math.PI, 0); c.fill(); ell(0, 14, 34, 22, '#f4dcaa'); c.strokeStyle = '#a8742a'; c.lineWidth = 3; c.beginPath(); c.moveTo(-44, -14); c.lineTo(-44, 36); c.stroke(); }
+  else if (n === 'noodle') { c.strokeStyle = '#f6d878'; c.lineWidth = 6; for (let i = -3; i <= 3; i++) { c.beginPath(); c.moveTo(i * 9, -44); c.bezierCurveTo(i * 9 + 14, -20, i * 9 - 14, 10, i * 9, 44); c.stroke(); } circ(-30, 30, 18, '#e0301e'); circ(-34, 24, 5, 'rgba(255,255,255,.4)'); }
+  else if (n === 'coffee') { ell(0, 18, 40, 14, '#fff'); c.fillStyle = '#fff'; c.beginPath(); c.moveTo(-34, -14); c.lineTo(34, -14); c.lineTo(26, 24); c.quadraticCurveTo(0, 34, -26, 24); c.fill(); ell(0, -14, 34, 8, '#3a1c0a'); c.strokeStyle = '#fff'; c.lineWidth = 6; c.beginPath(); c.arc(38, 2, 12, -1.2, 1.2); c.stroke(); c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = 4; c.beginPath(); c.moveTo(-10, -26); c.bezierCurveTo(-18, -36, -2, -42, -10, -52); c.moveTo(8, -26); c.bezierCurveTo(0, -36, 16, -42, 8, -52); c.stroke(); }
+  else if (n === 'leaf') { ell(-10, 4, 20, 40, '#3aa04a', 0.6); ell(16, -2, 18, 36, '#58c05a', -0.5); c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = 2.5; c.beginPath(); c.moveTo(-22, 34); c.lineTo(2, -28); c.moveTo(10, 30); c.lineTo(24, -26); c.stroke(); }
+  else if (n === 'hex') { for (const [a, b] of [[0, 0], [-34, -18], [34, -18], [0, -36], [-34, 20], [34, 20], [0, 38]]) { c.fillStyle = a === 0 && b === 0 ? '#f2b01e' : '#ffd54a'; c.beginPath(); for (let i = 0; i < 6; i++) { const t = i * Math.PI / 3 + Math.PI / 6; c.lineTo(a + Math.cos(t) * 20, b + Math.sin(t) * 20); } c.closePath(); c.fill(); } }
+  else if (n === 'berry') { for (const [a, b] of [[-18, 6], [18, 8], [0, -18]]) { c.fillStyle = '#d8142a'; c.beginPath(); c.moveTo(a, b + 30); c.bezierCurveTo(a - 34, b + 8, a - 24, b - 24, a, b - 18); c.bezierCurveTo(a + 24, b - 24, a + 34, b + 8, a, b + 30); c.fill(); ell(a, b - 22, 10, 5, '#2f9a3a'); circ(a - 6, b, 2, '#ffd2a0'); circ(a + 7, b + 8, 2, '#ffd2a0'); circ(a, b + 14, 2, '#ffd2a0'); } }
+  else if (n === 'apple') { circ(-12, 6, 30, '#c9302c'); circ(14, 6, 30, '#c9302c'); circ(-4, -6, 10, 'rgba(255,255,255,.25)'); c.strokeStyle = '#5a3a1a'; c.lineWidth = 4; c.beginPath(); c.moveTo(0, -18); c.lineTo(4, -38); c.stroke(); ell(18, -34, 16, 7, '#3aa04a', -0.4); }
+  else if (n === 'drum') { for (const r of [-0.5, 0.5]) { c.save(); c.rotate(r); ell(0, -4, 20, 34, '#e0902a'); ell(0, 24, 8, 8, '#f4f4f4'); circ(-6, -10, 4, '#f2b050'); c.restore(); } }
+  c.restore();
+}
+// Front-Gestaltung je Typ (Koordinaten in mm der Etikettenfläche; Wickel-Typen haben die Front bei x = W/2)
+const PART = {
+  can(c, d, W, H) {
+    c.fillStyle = gradv(c, 0, 0, 0, H, d.c1, d.c2); c.fillRect(0, 0, W, H);
+    c.fillStyle = d.c3; c.beginPath(); c.moveTo(0, H * 0.72); for (let x = 0; x <= W; x += 5) c.lineTo(x, H * 0.72 + Math.sin(x / W * Math.PI * 8) * 3.5); c.lineTo(W, H * 0.78); for (let x = W; x >= 0; x -= 5) c.lineTo(x, H * 0.78 + Math.sin(x / W * Math.PI * 8) * 3.5); c.fill();
+    const cx = W / 2; c.textAlign = 'center'; c.textBaseline = 'middle';
+    ptxt(c, d.brand, cx, 34, 62, 26, d.tx, [d.c2, 4]); ptxt(c, d.sub, cx, 49, 58, 8, d.tx, null, 'bold'); picon(c, d.pic, cx, 76, 32); ptxt(c, d.vol, cx, 100, 40, 9, d.tx, null, 'bold');
+    for (const bx of [-18, W - 18]) { pbarcode(c, bx, 72, 36, 22); ptxt(c, 'PFAND 0,25 €', bx + 18, 60, 36, 6, d.tx, null, 'bold'); }
+    pnutri(c, W * 0.25 - 12, 50, 24, 'rgba(255,255,255,.7)'); pnutri(c, W * 0.75 - 12, 50, 24, 'rgba(255,255,255,.7)');
+    c.fillStyle = gradv(c, 0, 0, 0, 7, '#f4f6f8', '#aab1b8'); c.fillRect(0, 0, W, 7); c.fillStyle = gradv(c, 0, H - 7, 0, H, '#aab1b8', '#f4f6f8'); c.fillRect(0, H - 7, W, 7);
+  },
+  tin(c, d, W, H) {
+    c.fillStyle = d.c1; c.fillRect(0, 0, W, H); c.fillStyle = gradv(c, 0, 0, 0, H, 'rgba(255,255,255,.12)', 'rgba(0,0,0,.2)'); c.fillRect(0, 0, W, H);
+    const cx = W / 2; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = d.c3; c.fillRect(0, 7, W, 3); c.fillRect(0, H - 10, W, 3);
+    ptxt(c, d.brand, cx, 24, 76, 20, '#fff', [d.c2, 3]); c.fillStyle = d.c3; c.beginPath(); c.arc(cx, 62, 25, 0, 7); c.fill(); c.fillStyle = d.c2; c.beginPath(); c.arc(cx, 62, 22, 0, 7); c.fill(); picon(c, d.pic, cx, 62, 38);
+    ptxt(c, d.sub, cx, 93, 76, 7, '#fff', null, 'bold'); ptxt(c, d.vol, cx + 52, 62, 24, 8, '#fff', null, 'bold'); pbarcode(c, -16, 40, 32, 30); pbarcode(c, W - 16, 40, 32, 30);
+    c.fillStyle = gradv(c, 0, 0, 0, 5, '#f4f6f8', '#aab1b8'); c.fillRect(0, 0, W, 5); c.fillStyle = gradv(c, 0, H - 5, 0, H, '#aab1b8', '#f4f6f8'); c.fillRect(0, H - 5, W, 5);
+  },
+  bottle(c, d, W, H) {
+    c.fillStyle = gradv(c, 0, 0, 0, H, d.c2, d.c2); c.fillRect(0, 0, W, H); c.fillStyle = 'rgba(255,255,255,.15)'; c.fillRect(W * 0.46, 40, 7, 150); // Flüssigkeit + Glanz
+    c.fillStyle = d.cap || d.c1; c.fillRect(0, 0, W, 19); c.fillStyle = 'rgba(0,0,0,.25)'; for (let x = 0; x < W; x += 4) c.fillRect(x, 3, 1.4, 12);
+    const y0 = 88, y1 = 176; c.fillStyle = d.c1; c.fillRect(0, y0, W, y1 - y0); c.fillStyle = d.c3; c.fillRect(0, y0, W, 4); c.fillRect(0, y1 - 4, W, 4);
+    const cx = W / 2; c.textAlign = 'center'; c.textBaseline = 'middle';
+    ptxt(c, d.brand, cx, y0 + 19, 62, 21, d.tx, [d.c1 === '#ffffff' ? '#888' : 'rgba(0,0,0,.35)', 3]); ptxt(c, d.sub, cx, y0 + 33, 58, 7, d.tx, null, 'bold'); picon(c, d.pic, cx, y0 + 55, 34); ptxt(c, d.vol, cx, y1 - 8, 40, 9, d.tx, null, 'bold');
+    for (const bx of [-17, W - 17]) { pbarcode(c, bx, y0 + 28, 34, 24); } pnutri(c, W * 0.25 - 12, y0 + 12, 24, 'rgba(255,255,255,.75)'); pnutri(c, W * 0.75 - 12, y0 + 12, 24, 'rgba(255,255,255,.75)');
+  },
+  beer(c, d, W, H) {
+    c.fillStyle = gradv(c, 0, 0, 0, H, d.c2, '#000'); c.fillRect(0, 0, W, H); c.fillStyle = 'rgba(255,255,255,.12)'; c.fillRect(W * 0.43, 60, 6, 120);
+    c.fillStyle = '#d6a640'; c.fillRect(0, 0, W, 12); c.fillStyle = 'rgba(0,0,0,.3)'; for (let x = 0; x < W; x += 6) c.fillRect(x, 0, 2, 12);
+    const cx = W / 2; c.fillStyle = d.c3 === '#1a1a1a' ? '#d6a640' : d.c3; c.fillRect(0, 36, W, 18);
+    c.fillStyle = d.c1; c.beginPath(); c.roundRect(cx - 42, 78, 84, 82, 10); c.fill(); c.strokeStyle = '#d6a640'; c.lineWidth = 2; c.stroke();
+    c.textAlign = 'center'; c.textBaseline = 'middle'; ptxt(c, d.brand, cx, 98, 74, 17, d.tx, null); ptxt(c, d.sub, cx, 112, 70, 6.5, d.tx, null, 'bold'); picon(c, d.pic, cx, 135, 28); ptxt(c, d.vol, cx, 153, 30, 7.5, d.tx, null, 'bold'); ptxt(c, d.brand, cx, 45, 80, 9, d.tx === '#1a1a1a' ? '#fff' : d.tx, null);
+    pbarcode(c, -14, 100, 28, 30); pbarcode(c, W - 14, 100, 28, 30);
+  },
+  jar(c, d, W, H) {
+    c.fillStyle = gradv(c, 0, 0, 0, H, d.c2, d.c2); c.fillRect(0, 0, W, H); c.fillStyle = 'rgba(255,255,255,.16)'; c.fillRect(W * 0.47, 20, 6, 70);
+    c.fillStyle = d.lid || d.c3; c.fillRect(0, 0, W, 18); c.fillStyle = 'rgba(0,0,0,.25)'; for (let x = 0; x < W; x += 4) c.fillRect(x, 2, 1.4, 14); c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(0, 17, W, 1.5);
+    c.fillStyle = d.c1; c.fillRect(0, 30, W, 56); c.fillStyle = d.c3; c.fillRect(0, 30, W, 3); c.fillRect(0, 83, W, 3);
+    const cx = W / 2; c.textAlign = 'center'; c.textBaseline = 'middle'; ptxt(c, d.brand, cx, 44, 72, 17, d.tx, null); ptxt(c, d.sub, cx, 56, 66, 6.5, d.tx, null, 'bold'); picon(c, d.pic, cx - 44, 62, 28); picon(c, d.pic, cx + 44, 62, 28); ptxt(c, d.vol, cx, 76, 40, 7, d.tx, null, 'bold');
+    pbarcode(c, -14, 38, 28, 40); pbarcode(c, W - 14, 38, 28, 40);
+  },
+  box(c, d, W, H, o = {}) {
+    c.fillStyle = gradv(c, 0, 0, W, H, d.c1, d.c2); c.fillRect(0, 0, W, H);
+    c.fillStyle = 'rgba(255,255,255,.14)'; c.beginPath(); c.arc(W / 2, H * 0.55, W * 0.36, 0, 7); c.fill();
+    c.fillStyle = d.c3; c.fillRect(0, H * 0.05, W, H * 0.2); c.fillStyle = 'rgba(0,0,0,.2)'; c.fillRect(0, H * 0.25, W, 3);
+    c.textAlign = 'center'; c.textBaseline = 'middle'; ptxt(c, d.brand, W / 2, H * 0.15, W * 0.9, W * 0.2, '#fff', ['rgba(0,0,0,.55)', W * 0.03]);
+    picon(c, d.pic, W / 2, H * 0.52, W * 0.62);
+    c.fillStyle = d.c3; c.beginPath(); c.roundRect(W * 0.06, H * 0.77, W * 0.88, H * 0.1, 4); c.fill(); ptxt(c, d.sub, W / 2, H * 0.82, W * 0.82, W * 0.075, '#fff', null);
+    c.fillStyle = '#fff'; c.beginPath(); c.arc(W * 0.84, H * 0.37, W * 0.1, 0, 7); c.fill(); ptxt(c, d.vol, W * 0.84, H * 0.37, W * 0.17, W * 0.05, '#222', null, 'bold');
+    ptxt(c, 'NEU', W * 0.14, H * 0.37, W * 0.18, W * 0.07, '#ffd21f', ['#000', 2]);
+    if (o.crimp) { c.fillStyle = 'rgba(255,255,255,.28)'; c.fillRect(0, 0, W, H * 0.045); c.fillRect(0, H * 0.955, W, H * 0.045); c.strokeStyle = 'rgba(0,0,0,.28)'; c.lineWidth = 0.8; for (let x = 0; x < W; x += 3) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H * 0.045); c.moveTo(x, H * 0.955); c.lineTo(x, H); c.stroke(); } c.fillStyle = gradv(c, 0, 0, W, 0, 'rgba(255,255,255,.18)', 'rgba(0,0,0,.12)'); c.fillRect(0, 0, W, H); }
+    pbarcode(c, W * 0.06, H * 0.9, W * 0.28, H * 0.05);
+  },
+  carton(c, d, W, H) {
+    c.fillStyle = gradv(c, 0, 0, 0, H, d.c1, d.c2); c.fillRect(0, 0, W, H);
+    c.fillStyle = d.c3; c.fillRect(0, 0, W, 22); c.fillRect(0, H - 26, W, 26);
+    c.textAlign = 'center'; c.textBaseline = 'middle'; { const bw = d.brand.split(' '); if (bw.length > 1) { ptxt(c, bw[0], W / 2, 36, W * 0.92, 17, d.tx, null); ptxt(c, bw.slice(1).join(' '), W / 2, 53, W * 0.92, 17, d.tx, null); } else ptxt(c, d.brand, W / 2, 44, W * 0.92, 19, d.tx, null); } picon(c, d.pic, W / 2, 86, 44); ptxt(c, d.sub, W / 2, 120, W * 0.9, 6.5, d.tx, null, 'bold');
+    c.fillStyle = '#fff'; c.beginPath(); c.arc(W * 0.5, 146, 12, 0, 7); c.fill(); ptxt(c, d.vol, W / 2, 146, 20, 7, '#222', null, 'bold'); ptxt(c, 'HALTBAR', W / 2, H - 13, 50, 7, '#fff', null, 'bold');
+  },
+};
+PART.box2 = PART.box; PART.bag = (c, d, W, H) => PART.box(c, d, W, H, { crimp: true });
+function ptag(c, i) { // Preisschild: weiß, gelb mit rotem Preis bei Angebot
+  const W = 60, H = 28, sale = i % 3 === 2; c.fillStyle = sale ? '#ffe14a' : '#ffffff'; c.fillRect(0, 0, W, H);
+  c.fillStyle = sale ? '#d11a24' : '#222'; c.textAlign = 'center'; c.textBaseline = 'middle'; ptxt(c, PRICES[i % 8], 22, 15, 36, 22, sale ? '#d11a24' : '#111', null); ptxt(c, '€', 49, 15, 12, 14, sale ? '#d11a24' : '#111', null, 'bold');
+  c.fillStyle = sale ? '#d11a24' : '#888'; c.fillRect(3, 2, sale ? 54 : 12, 3); ptxt(c, sale ? 'ANGEBOT' : 'je Stück', 30, 26, 40, 3.5, '#444', null, 'bold');
+}
 function prodAtlas() {
   if (PRODTEX) return PRODTEX;
-  const brands = ['eCola', 'Sprunk', 'Pißwasser', 'Raine', 'Cluckin Bell', 'Phat Chips', 'Meteorite', 'Ego Chaser', 'Crunchy Flakes', 'Pasta Bella', 'Bean Machine', 'Sauber+', 'Frische Milch', 'O-Saft', 'Ketchup Rot', 'Toastbrot', 'Taco Bomb', 'Choco Bombs', 'Pfefferminz', 'Logger Bier', 'Mineralwasser', 'Erdnüsse', 'Burgershot', 'Kaffee Gold', 'Tomaten', 'Reis Natur', 'Haferflocken', 'Hundefutter', 'Seife', 'Shampoo', 'Gummibären', 'Eistee'];
-  const cols = ['#c4161c', '#1f9d3a', '#d8b02a', '#3a8fd8', '#e8742a', '#7a3ac8', '#2a2a2a', '#e8e8e8', '#f2c200', '#2ab0a0', '#8a5a2a', '#d84a8a'];
-  PRODTEX = canvasTex(1024, 512, c => {
-    for (let i = 0; i < 32; i++) {
-      const x = (i % 8) * 128, y = Math.floor(i / 8) * 128, col = cols[(i * 5) % cols.length], col2 = cols[(i * 7 + 3) % cols.length];
-      const gr = c.createLinearGradient(x, y, x + 128, y + 128); gr.addColorStop(0, col); gr.addColorStop(1, col2); c.fillStyle = gr; c.fillRect(x, y, 128, 128);
-      c.fillStyle = 'rgba(255,255,255,.85)'; c.beginPath(); c.ellipse(x + 64, y + 78, 34, 26, 0, 0, 7); c.fill();
-      c.fillStyle = col; c.beginPath(); c.arc(x + 64, y + 78, 14 + (i % 3) * 4, 0, 7); c.fill();
-      c.fillStyle = '#fff'; c.fillRect(x, y + 10, 128, 30); c.fillStyle = col2 === '#e8e8e8' ? '#222' : col2; c.font = 'bold 19px Arial'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(brands[i], x + 64, y + 26, 120);
-      c.fillStyle = 'rgba(0,0,0,.25)'; c.fillRect(x, y + 120, 128, 8); c.fillStyle = '#fff'; c.font = 'bold 11px Arial'; c.fillText(['500 g', '1 L', '330 ml', '250 g', '6 x 0,5 L', '1 kg'][i % 6], x + 64, y + 112);
-    }
-  });
+  const cv = document.createElement('canvas'); cv.width = cv.height = PA; const c = cv.getContext('2d'); c.fillStyle = '#ffffff'; c.fillRect(0, 0, PA, PA);
+  const cell = (i, draw, brandCol, art) => {
+    const x0 = (i % 8) * PC, y0 = Math.floor(i / 8) * PC; c.save(); c.beginPath(); c.rect(x0, y0, PC, PC); c.clip();
+    c.fillStyle = brandCol; c.fillRect(x0, y0, PC / 2, PSTRIP); c.fillStyle = '#c9ced3'; c.fillRect(x0 + PC / 2, y0, PC / 2, PSTRIP);
+    c.translate(x0, y0 + PSTRIP); c.scale(PC / art[0], (PC - PSTRIP) / art[1]); c.textAlign = 'center'; c.textBaseline = 'middle'; draw(art); c.restore();
+  };
+  PKEYS.forEach((k, i) => { const d = PDC[k]; cell(i, a => PART[d.t](c, d, a[0], a[1]), d.c1, d.T.art); });
+  for (let i = 0; i < 8; i++) cell(PTAG0 + i, a => ptag(c, i), '#ffffff', PTYPES.tag.art);
+  PRODTEX = new THREE.CanvasTexture(cv); PRODTEX.colorSpace = THREE.SRGBColorSpace; PRODTEX.anisotropy = typeof ANISO !== 'undefined' ? ANISO : 4; PRODTEX.wrapS = PRODTEX.wrapT = THREE.ClampToEdgeWrapping;
   return PRODTEX;
 }
+function prodMat() {
+  if (PRODMAT) return PRODMAT;
+  PRODMAT = new THREE.MeshStandardMaterial({ map: prodAtlas(), roughness: 0.38, metalness: 0.08 });
+  PRODMAT.onBeforeCompile = sh => { // Etiketten-Zelle je Instanz (aCell) im Atlas
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec2 aCell;').replace('#include <uv_vertex>', '#include <uv_vertex>\n#ifdef USE_MAP\nvMapUv = uv * vec2(0.125) + aCell;\n#endif');
+  };
+  PRODMAT.customProgramCacheKey = () => 'prodatlas';
+  return PRODMAT;
+}
+// ---------- Geometrien (einmal gebaut, je Etage geklont) ----------
+const PIN = 2 / PC; // UV-Einzug gegen Bluten zwischen Zellen
+const puvArt = (u, v) => [PIN + u * (1 - 2 * PIN), PIN + v * (PART_V - 2 * PIN)];
+const puvStrip = (silver = false) => [silver ? 0.75 : 0.25, 1 - PSTRIP / PC / 2];
+function pLathe(T) {
+  const g = new THREE.LatheGeometry(lathePts(T.lathe), T.seg); g.rotateY(Math.PI); // u = 0.5 zeigt nach +z (Front)
+  const p = g.attributes.position, uv = g.attributes.uv; for (let i = 0; i < p.count; i++) { const a = puvArt(uv.getX(i), p.getY(i) / T.h); uv.setXY(i, a[0], a[1]); }
+  return g.toNonIndexed();
+}
+function pBox(T, bag) {
+  const g = bag ? new THREE.BoxGeometry(T.w, T.h, T.d, 1, 8, 1) : new THREE.BoxGeometry(T.w, T.h, T.d), p = g.attributes.position, uv = g.attributes.uv;
+  if (bag) for (let i = 0; i < p.count; i++) { const t = (p.getY(i) + T.h / 2) / T.h, f = Math.max(0.1, Math.pow(Math.max(0, Math.sin(Math.PI * t)), 0.45)); p.setZ(i, p.getZ(i) * f); p.setX(i, p.getX(i) * (0.94 + 0.06 * f)); }
+  const fc = bag ? [18, 18, 4, 4, 18, 18] : [4, 4, 4, 4, 4, 4]; let face = 0, lim = fc[0]; // Flächen-Reihenfolge px,nx,py,ny,pz,nz
+  for (let i = 0; i < p.count; i++) { if (i >= lim) lim += fc[++face]; const a = face === 4 ? puvArt(uv.getX(i), uv.getY(i)) : puvStrip(); uv.setXY(i, a[0], a[1]); }
+  if (bag) g.computeVertexNormals(); return g.toNonIndexed();
+}
+function pCarton(T) {
+  const hw = T.w / 2, hd = T.d / 2, bh = 0.18, rh = 0.05, parts = [], body = new THREE.BoxGeometry(T.w, bh, T.d); body.translate(0, bh / 2, 0);
+  { const p = body.attributes.position, uv = body.attributes.uv; for (let i = 0; i < p.count; i++) { const face = Math.floor(i / 4), a = face === 4 ? puvArt(uv.getX(i), uv.getY(i)) : puvStrip(); uv.setXY(i, a[0], a[1]); } }
+  parts.push(body.toNonIndexed());
+  const pos = [], tri = (a, b, c2) => { pos.push(...a, ...b, ...c2); };
+  const A = [-hw, bh, hd], B = [hw, bh, hd], C = [-hw, bh + rh, 0], D = [hw, bh + rh, 0], E = [-hw, bh, -hd], F = [hw, bh, -hd];
+  tri(A, B, D); tri(A, D, C); tri(F, E, C); tri(F, C, D); tri(E, A, C); tri(B, F, D);
+  const roof = new THREE.BufferGeometry(); roof.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); roof.computeVertexNormals();
+  const su = puvStrip(); roof.setAttribute('uv', new THREE.Float32BufferAttribute(new Array(pos.length / 3 * 2).fill(0).map((_, i) => i % 2 ? su[1] : su[0]), 2)); parts.push(roof);
+  const fin = new THREE.BoxGeometry(T.w, 0.012, 0.01); fin.translate(0, bh + rh + 0.006, 0); { const uv = fin.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, su[0], su[1]); } parts.push(fin.toNonIndexed());
+  return mergeGeometries(parts);
+}
+function pGeo(t) {
+  if (!PRODGEO) PRODGEO = {};
+  if (PRODGEO[t]) return PRODGEO[t];
+  const T = PTYPES[t]; return (PRODGEO[t] = T.lathe ? pLathe(T) : t === 'carton' ? pCarton(T) : pBox(T, t === 'bag'));
+}
+// ---------- Bestand (Instanzen sammeln, am Ende bauen) ----------
+function newStock() { return { t: {}, m: {}, o: [], n: 0 }; }
+// Ganze Orangen: einfache Kugel mit Poren-Textur (das Khronos-Mandarinenmodell ist eine geschälte Frucht und wird nur als Deko-Akzent eingestreut)
+let ORGEO = null, ORMAT = null;
+function orangeKit() {
+  if (ORGEO) return;
+  ORGEO = new THREE.SphereGeometry(0.5, 10, 8); const p = ORGEO.attributes.position; for (let i = 0; i < p.count; i++) { const k = 1 + 0.025 * Math.sin(p.getX(i) * 29 + p.getY(i) * 17) * Math.cos(p.getZ(i) * 23); p.setXYZ(i, p.getX(i) * k, p.getY(i) * 0.94 * k, p.getZ(i) * k); } ORGEO.computeVertexNormals();
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128; const c = cv.getContext('2d');
+  c.fillStyle = gradv(c, 0, 0, 0, 128, '#f58c10', '#ea7a08'); c.fillRect(0, 0, 256, 128);
+  for (let i = 0; i < 1400; i++) { c.fillStyle = i % 3 ? 'rgba(255,200,90,.35)' : 'rgba(150,60,0,.28)'; c.beginPath(); c.arc(Math.random() * 256, 10 + Math.random() * 108, 0.7 + Math.random() * 1.1, 0, 7); c.fill(); }
+  c.fillStyle = '#5b6a1c'; c.fillRect(0, 0, 256, 7); c.fillStyle = '#8a5a14'; c.fillRect(0, 121, 256, 7);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; ORMAT = new THREE.MeshStandardMaterial({ map: t, roughness: 0.55, metalness: 0 });
+}
+function stockOrange(S, x, y, z, rx, ry, rz, sc) { S.o.push(x, y, z, rx, ry, rz, sc); S.n++; }
+function stockAdd(S, id, x, y, z, yaw, s = 1) { // id = Produktschlüssel oder 'tag:<n>'
+  const tag = id.startsWith('tag:'), t = tag ? 'tag' : PDC[id].t, cell = tag ? PTAG0 + (+id.slice(4)) : PCELL[id];
+  (S.t[t] || (S.t[t] = [])).push(x, y, z, yaw, s * (tag ? 1 : PDC[id].sc), cell); S.n++;
+}
+// Echte Modelle (Obst, Fisch, Wasserflasche): Teile mit Knotenmatrix; Platzierung pivot 'base' (Fuß) oder 'center'
+function modelParts(name) {
+  const src = ASSETS.models[name]; if (!src) return null;
+  if (!src.userData.parts) { src.updateMatrixWorld(true); const parts = []; src.traverse(o => { if (o.isMesh && !o.isSkinnedMesh) parts.push({ geo: o.geometry, mat: o.material, m: o.matrixWorld.clone() }); }); src.userData.parts = parts; }
+  return src.userData.parts;
+}
+const _M = new THREE.Matrix4(), _Q = new THREE.Quaternion(), _E = new THREE.Euler(), _V = new THREE.Vector3(), _S = new THREE.Vector3(), _O = new THREE.Matrix4();
+function stockModel(S, name, size, fit, x, y, z, rx, ry, rz, pivot = 'base', jit = 1) {
+  const src = ASSETS.models[name]; if (!src || !modelParts(name)) return false;
+  const sc = size / src.userData.size[fit] * jit, o = src.userData.offset;
+  _E.set(rx, ry, rz, 'YXZ'); _Q.setFromEuler(_E); _V.set(x, y, z); _S.setScalar(sc);
+  _M.compose(_V, _Q, _S); _O.makeTranslation(o.x, pivot === 'center' ? o.y - src.userData.size.y / 2 : o.y, o.z); _M.multiply(_O);
+  const e = S.m[name] || (S.m[name] = []); e.push(_M.toArray()); S.n++; return true;
+}
+function stockFinish(S, g) { // Geometrie-Dispose (beim Etagen-Entladen) gibt auch die Instanz-Puffer frei
+  const mm = new THREE.Matrix4(), link = (geo, mesh) => { const f = () => { geo.removeEventListener('dispose', f); mesh.dispose(); }; geo.addEventListener('dispose', f); };
+  for (const t in S.t) {
+    const a = S.t[t], n = a.length / 6, geo = pGeo(t).clone(), cell = new Float32Array(n * 2), mesh = new THREE.InstancedMesh(geo, prodMat(), n);
+    for (let i = 0; i < n; i++) {
+      const k = i * 6; _V.set(a[k], a[k + 1], a[k + 2]); _Q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, a[k + 3]); _S.setScalar(a[k + 4]); mm.compose(_V, _Q, _S); mesh.setMatrixAt(i, mm);
+      const c = a[k + 5]; cell[i * 2] = (c % 8) * PC / PA; cell[i * 2 + 1] = 1 - (Math.floor(c / 8) + 1) * PC / PA;
+    }
+    geo.setAttribute('aCell', new THREE.InstancedBufferAttribute(cell, 2)); mesh.receiveShadow = true; mesh.name = 'prod_' + t; g.add(mesh); link(geo, mesh);
+  }
+  if (S.o.length) {
+    orangeKit(); const n = S.o.length / 7, geo = ORGEO.clone(), mesh = new THREE.InstancedMesh(geo, ORMAT, n), col = new THREE.Color();
+    for (let i = 0; i < n; i++) { const k = i * 7; _V.set(S.o[k], S.o[k + 1], S.o[k + 2]); _E.set(S.o[k + 3], S.o[k + 4], S.o[k + 5], 'YXZ'); _Q.setFromEuler(_E); _S.setScalar(S.o[k + 6]); mm.compose(_V, _Q, _S); mesh.setMatrixAt(i, mm); col.setRGB(1, 0.9 + 0.1 * ((i * 7) % 5) / 4, 0.8 + 0.2 * ((i * 3) % 4) / 3); mesh.setColorAt(i, col); }
+    mesh.receiveShadow = true; mesh.name = 'prod_orange'; g.add(mesh); link(geo, mesh);
+  }
+  for (const name in S.m) {
+    const arr = S.m[name], parts = modelParts(name);
+    for (const p of parts) {
+      const mesh = new THREE.InstancedMesh(p.geo, p.mat, arr.length);
+      for (let i = 0; i < arr.length; i++) { mm.fromArray(arr[i]).multiply(p.m); mesh.setMatrixAt(i, mm); }
+      mesh.receiveShadow = true; mesh.name = 'prod_' + name; g.add(mesh); link(p.geo, mesh);
+    }
+  }
+}
+// Regalfach bestücken: x0..x1 entlang des Regals, y = Brett-Oberseite, zs = Mittelachse, sg = Seite (+1/-1), lv = Ebene
+function stockShelf(S, rng, x0, x1, y, zs, sg, cat, lv) {
+  const list = PCATS[cat][lv], maxH = 0.385 - 0.005, yaw = sg > 0 ? 0 : Math.PI, front = 0.395; let x = x0 + 0.03, tg = 0;
+  while (x < x1 - 0.06) {
+    const key = list[Math.floor(rng() * list.length)], wb = key === 'WB', d = wb ? { w: 0.11, d: 0.11, h: 0.26, T: { rows: 2 } } : PDC[key];
+    if (d.h > maxH) continue;
+    const gap = 0.006, w = d.w + gap; let n = d.w < 0.1 ? 3 + Math.floor(rng() * 4) : d.w < 0.16 ? 2 + Math.floor(rng() * 3) : 2 + Math.floor(rng() * 2);
+    n = Math.min(n, Math.floor((x1 - 0.03 - x) / w)); if (n < 1) break;
+    const rows = Math.min(d.T.rows, Math.floor(0.36 / (d.d + 0.004)));
+    for (let i = 0; i < n; i++) for (let r = 0; r < rows; r++) {
+      const px = x + w * (i + 0.5), pz = zs + sg * (front - d.d / 2 - 0.004 - r * (d.d + 0.004));
+      if (wb) stockModel(S, 'WaterBottleLow', 0.26, 'y', px, y, pz, 0, yaw + (rng() - 0.5) * 0.3, 0) || stockAdd(S, 'raineP', px, y, pz, yaw); else stockAdd(S, key, px, y, pz, yaw);
+    }
+    stockAdd(S, 'tag:' + ((PCELL[key] || 3) * 3 + tg++) % 8, x + 0.04, y - 0.0125, zs + sg * 0.4165, yaw, 1.1);
+    x += n * w + 0.012 + (rng() < 0.05 ? 0.12 : 0);
+  }
+}
+// Kühlschrank (Modellraum: Front +z, Böden bei y 0.415/0.725/1.085/1.445, Innenbreite x ±0.35, Tiefe z -0.16..0.29). (fx,fz,yaw) = Platz des Kühlschranks im Raum
+function stockFridge(S, rng, fx, fz, yaw) {
+  const ys = [0.415, 0.725, 1.085, 1.445], hs = [0.30, 0.335, 0.335, 0.35], c = Math.cos(yaw), s = Math.sin(yaw);
+  for (let lv = 0; lv < 4; lv++) {
+    let x = -0.34; const cand = PCOLD.filter(k => PDC[k].h <= hs[lv]);
+    while (x < 0.34) {
+      const d = PDC[cand[Math.floor(rng() * cand.length)]]; let n = Math.min(d.w < 0.1 ? 3 + Math.floor(rng() * 3) : 2 + Math.floor(rng() * 2), Math.floor((0.35 - x) / (d.w + 0.004))); if (n < 1) break;
+      const rows = Math.min(3, Math.floor(0.45 / (d.d + 0.004)));
+      for (let i = 0; i < n; i++) for (let r = 0; r < rows; r++) { const lx = x + (d.w + 0.004) * (i + 0.5), lz = 0.28 - d.d / 2 - r * (d.d + 0.004); stockAdd(S, d.id, fx + lx * c + lz * s, ys[lv], fz - lx * s + lz * c, yaw); }
+      x += n * (d.w + 0.004) + 0.006;
+    }
+  }
+}
+// Obstkiste: Fläche w x d (Mitte cx,cz), Boden-Oberkante cy; Früchte im Sechseck-Raster mit Kuppel, zweite Lage teilweise
+function stockCrate(S, rng, kind, cx, cy, cz, w, d, yaw) {
+  const c = Math.cos(yaw), s = Math.sin(yaw), put = (lx, ly, lz, rx, ry, rz) => {
+    const wx = cx + lx * c + lz * s, wz = cz - lx * s + lz * c;
+    if (kind === 'orange') { if (rng() < 0.07 && stockModel(S, 'MandarinOrange', 0.075, 'z', wx, cy + ly - 0.012, wz, 0, ry + yaw, 0, 'center')) return; stockOrange(S, wx, cy + ly, wz, rx, ry + yaw, rz, 0.068 * (0.93 + rng() * 0.14)); }
+    else stockModel(S, 'Avocado', 0.09, 'y', wx, cy + ly, wz, rx, ry + yaw, rz, 'center', 0.92 + rng() * 0.16);
+  };
+  const pitch = kind === 'orange' ? 0.068 : 0.088, rad = kind === 'orange' ? 0.033 : 0.03;
+  for (let layer = 0; layer < 2; layer++) {
+    const off = layer ? pitch / 2 : 0, ny = Math.floor((d - rad * 2) / (pitch * 0.87)) + 1;
+    for (let j = 0; j < ny; j++) {
+      const rz = -d / 2 + rad + j * pitch * 0.87, shift = (j + layer) % 2 ? pitch / 2 : 0, nx = Math.floor((w - rad * 2 - shift) / pitch) + 1;
+      for (let i = 0; i < nx; i++) {
+        const lx = -w / 2 + rad + shift + i * pitch; if (layer && rng() < 0.3) continue;
+        const dome = 0.012 * (1 - Math.min(1, (Math.abs(lx) / (w / 2)) ** 2 + (Math.abs(rz) / (d / 2)) ** 2)), ly = rad * (kind === 'orange' ? 0.95 : 0.4) + layer * pitch * 0.62 + dome;
+        if (kind === 'orange') put(lx, ly, rz, (rng() - 0.5) * 1.2, rng() * 6.28, (rng() - 0.5) * 1.2);
+        else if (layer) put(lx, ly + 0.01, rz, -Math.PI / 2, rng() * 6.28, 0); // Schnittfläche nach oben
+        else put(lx, ly, rz, rng() < 0.5 ? -Math.PI / 2 : Math.PI / 2, rng() * 6.28, 0);
+      }
+    }
+  }
+}
+// ==== PRODKIT END ====
 function interiorTextures() {
   if (ITEX) return ITEX;
   const tile = (base, draw) => canvasTex(256, 256, (c, w, h) => { c.fillStyle = base; c.fillRect(0, 0, w, h); draw(c, w, h); });
@@ -2033,23 +3016,64 @@ function buildFloor(f) {
       for (let x = -hw + 1.5; x < hw - 1; x += 1.2) { fb(1.1, 2.0, 0.7, x, 1.0, hd - 0.6, '#d8dde2', true); scr.push(box(1.0, 1.6, 0.02, x, 1.05, hd - 0.96, '#fff')); }
     } else if (kind === 'market' || kind === 'gas') {
       INT.company = floorName(b, 0);
-      const prod = ['#d43f3a', '#f0ad4e', '#5cb85c', '#5bc0de', '#ffffff', '#8e44ad', '#2c3e50', '#e67e22', '#f4d03f', '#a04000'];
+      const stk = newStock(), pr = mulberry(b.seed * 17 + f * 131 + 7); prods.push(stk);
       const lanes = kind === 'market' ? Math.max(2, Math.min(4, Math.floor(W / 8))) : 1;
       for (let k = 0; k < lanes; k++) {
         const x = -hw + 2.6 + k * 3.4, z = -hd + 3.4;
         rb(0.8, 0.9, 2.4, 0, 0.45, 0, 0, x, z, '#3a3f45', true); rb(0.5, 0.05, 1.6, 0, 0.92, -0.2, 0, x, z, '#222'); rb(0.35, 0.35, 0.3, 0, 1.12, 0.7, 0, x, z, '#1a1a1a');
         spot('cashier', x + 0.95, z + 0.4, -Math.PI / 2, 'stand', all); spot('pay', x - 0.95, z - 0.2, Math.PI / 2, 'look', all);
       }
+      // Regale (Gondeln): Rückwand, Seitenwände, 4 Bretter mit Preisschiene; Ware in Facings (gleiches Produkt 2-6x nebeneinander, 2 Reihen tief) mit Preisschild
+      const cats = kind === 'market' ? ['soda', 'snack', 'cereal', 'canned', 'dairy', 'water', 'beer', 'pantry'] : ['soda', 'snack', 'water', 'beer'];
+      let unit = 0;
       for (let z = -hd + (kind === 'market' ? 7 : 5.5), row = 0; z < hd - 2.6; z += 2.8, row++) {
-        for (let x = -hw + (kind === 'market' ? 4 : 2.8); x < hw - 3; x += 7) {
+        for (let x = -hw + (kind === 'market' ? 4 : 2.8); x < hw - 3; x += 7, unit++) {
           const len = Math.min(5.5, hw - 1.5 - x); if (len < 2) continue;
-          rb(len, 1.8, 0.6, 0, 0.9, 0, 0, x + len / 2, z, '#e3e3e3', true);
-          for (let lv = 0; lv < 4; lv++) for (const sg of [-1, 1]) { if (sg > 0) fb(len, 0.03, 0.84, x + len / 2, 0.135 + lv * 0.42, z, '#c9ccd0'); let q = -len / 2 + 0.12; const cell = Math.floor(r() * 32), tall = PROD_SIZES[cell % PROD_SIZES.length]; while (q < len / 2 - 0.12) { prods.push([x + len / 2 + q, 0.15 + lv * 0.42, z + sg * (0.3 + (tall[3] ? tall[0] : tall[2]) / 2 + 0.02), tall, cell + (r() < 0.25 ? 1 : 0)]); q += tall[0] + 0.012; } }
+          const cx = x + len / 2;
+          fb(len, 1.8, 0.04, cx, 0.9, z, '#c9ced3'); fb(0.04, 1.8, 0.8, x + 0.02, 0.9, z, '#aeb4ba'); fb(0.04, 1.8, 0.8, x + len - 0.02, 0.9, z, '#aeb4ba');
+          fb(len, 0.05, 0.8, cx, 1.825, z, '#e3e3e3'); fb(len - 0.08, 0.12, 0.76, cx, 0.06, z, '#6b7077');
+          for (let lv = 0; lv < 4; lv++) { const by = 0.135 + lv * 0.42; fb(len - 0.08, 0.03, 0.8, cx, by, z, '#b7bdc3'); fb(len - 0.08, 0.034, 0.012, cx, by, z - 0.406, '#5d636a'); fb(len - 0.08, 0.034, 0.012, cx, by, z + 0.406, '#5d636a'); }
+          iSolid(x, x + len, z - 0.4, z + 0.4, 1.85);
+          for (const sg of [-1, 1]) { const cat = cats[(unit * 3 + (sg > 0 ? 1 : 0) + row) % cats.length]; for (let lv = 0; lv < 4; lv++) stockShelf(stk, pr, x + 0.04, x + len - 0.04, 0.15 + lv * 0.42, z, sg, cat, lv); }
           spot('shelf', x + len / 2 + rnd(-1.5, 1.5), z - 0.9, 0, 'browse', all); spot('shelf', x + len / 2 + rnd(-1.5, 1.5), z + 0.9, Math.PI, 'browse', all);
         }
       }
-      for (let x = -hw + 1.2; x < hw - 0.8; x += 1.0) { if (addModel('CommercialRefrigerator', 2.15, 'y', x, hd - 0.55, Math.PI)) { fSolid(F, x - 0.45, x + 0.45, hd - 1.0, hd - 0.1, -0.05, 2.2); continue; } fb(1.1, 2.0, 0.7, x, 1.0, hd - 0.6, '#d8dde2', true); scr.push(box(1.0, 1.6, 0.02, x, 1.05, hd - 0.96, '#fff')); }
-      if (kind === 'market') for (let k = 0; k < 4; k++) { const x = hw - 3 - k * 1.6, z = -hd + 3; rb(1.3, 0.8, 1.0, 0, 0.4, 0, 0, x, z, '#8a6a3a', true); for (let q = 0; q < 12; q++) rb(0.12, 0.12, 0.12, rnd(-0.5, 0.5), 0.86, rnd(-0.4, 0.4), 0, x, z, ['#e74c3c', '#f1c40f', '#27ae60', '#e67e22'][k]); }
+      // Kühlregale an der Rückwand: das Modell ohne seine Champagnerflaschen, innen Getränke als Instanzen
+      for (let x = -hw + 1.2; x < hw - 0.8; x += 1.0) {
+        const fr = modelInstance('CommercialRefrigerator', 2.15, 'y');
+        if (fr) {
+          const drop = []; fr.traverse(o => { if (o.isMesh && /^Champagne/.test(o.name)) drop.push(o); }); for (const o of drop) o.removeFromParent();
+          fr.position.set(x, 0, hd - 0.55); fr.rotation.y = Math.PI; g.add(fr); stockFridge(stk, pr, x, hd - 0.55, Math.PI);
+          fSolid(F, x - 0.45, x + 0.45, hd - 1.0, hd - 0.1, -0.05, 2.2); continue;
+        }
+        fb(1.1, 2.0, 0.7, x, 1.0, hd - 0.6, '#d8dde2', true); scr.push(box(1.0, 1.6, 0.02, x, 1.05, hd - 0.96, '#fff'));
+      }
+      if (kind === 'market') {
+        // Obsttheke am Eingang: Holzkisten mit Mandarinen und Avocados (echte Modelle als Instanzen)
+        const frt = ['orange', 'avocado', 'avocado', 'orange', 'orange', 'avocado', 'avocado', 'orange'];
+        for (let k = 0; k < 4; k++) {
+          const x = hw - 3 - k * 1.6, z = -hd + 3, th = 0.5;
+          rb(1.3, th, 0.62, 0, th / 2, 0, 0, x, z, '#5c4128', true); rb(1.34, 0.03, 0.66, 0, th + 0.015, 0, 0, x, z, '#7a5a38');
+          for (let q = 0; q < 2; q++) {
+            const cx = x + (q ? 0.32 : -0.32), cw = 0.58, cd = 0.44, cy = th + 0.03, wood = q ? '#b98d55' : '#a87a46';
+            rb(cw, 0.16, cd, 0, cy + 0.08, 0, 0, cx, z, '#4a2e16'); // Füllung (dunkel zwischen den Früchten)
+            rb(cw, 0.2, 0.02, 0, cy + 0.1, cd / 2 - 0.01, 0, cx, z, wood); rb(cw, 0.2, 0.02, 0, cy + 0.1, -cd / 2 + 0.01, 0, cx, z, wood);
+            rb(0.02, 0.2, cd, cw / 2 - 0.01, cy + 0.1, 0, 0, cx, z, wood); rb(0.02, 0.2, cd, -cw / 2 + 0.01, cy + 0.1, 0, 0, cx, z, wood);
+            for (const sy of [0.04, 0.12, 0.2]) { rb(cw + 0.02, 0.012, 0.02, 0, cy + sy, cd / 2 + 0.002, 0, cx, z, '#8a5e30'); rb(cw + 0.02, 0.012, 0.02, 0, cy + sy, -cd / 2 - 0.002, 0, cx, z, '#8a5e30'); }
+            const kind2 = frt[k * 2 + q]; stockCrate(stk, pr, kind2, cx, cy + 0.16, z, cw - 0.04, cd - 0.04, (pr() - 0.5) * 0.3);
+            stockAdd(stk, 'tag:' + (k * 2 + q + (kind2 === 'orange' ? 2 : 5)) % 8, cx, cy + 0.105, z + cd / 2 + 0.014, 0, 2.2); stockAdd(stk, 'tag:' + (k * 2 + q + 3) % 8, cx, cy + 0.105, z - cd / 2 - 0.014, Math.PI, 2.2);
+          }
+        }
+        // Fischtheke: weißer Korpus, leicht blau leuchtende Eisfläche mit Eisstücken, Fische (BarramundiFish) liegen darauf
+        const fx = hw - 0.65, fz = -hd + 7;
+        rb(0.8, 0.9, 2.4, 0, 0.45, 0, 0, fx, fz, '#f2f4f6', true); rb(0.86, 0.04, 2.46, 0, 0.92, 0, 0, fx, fz, '#d9dee3');
+        for (const [w2, d2, ox, oz] of [[0.86, 0.05, 0, 1.205], [0.86, 0.05, 0, -1.205], [0.05, 2.46, 0.405, 0], [0.05, 2.46, -0.405, 0]]) rb(w2, 0.09, d2, ox, 0.97, oz, 0, fx, fz, '#d9dee3');
+        const ice = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.04, 2.34), new THREE.MeshStandardMaterial({ color: 0xc9e4f4, emissive: 0x3f86c0, emissiveIntensity: 0.4, roughness: 0.3, metalness: 0.05 })); ice.position.set(fx, 0.955, fz); g.add(ice);
+        for (let q = 0; q < 70; q++) { const s2 = rr(0.025, 0.05); vc.push(colorize(new THREE.IcosahedronGeometry(s2, 0).rotateY(rr(0, 6)).translate(fx + rr(-0.33, 0.33), 0.975 + s2 * 0.4, fz + rr(-1.1, 1.1)), q % 3 ? '#e4f2fa' : '#cfe6f3')); }
+        for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) stockModel(stk, 'BarramundiFish', 0.46, 'z', fx + (j - 1) * 0.235 + rr(-0.02, 0.02), 0.985 + 0.045, fz + (i - 1.5) * 0.58 + rr(-0.03, 0.03), 0, (i + j) % 2 ? 0 : Math.PI + rr(-0.15, 0.15), ((i + j) % 2 ? 1 : -1) * Math.PI / 2, 'center');
+        stockAdd(stk, 'tag:3', fx - 0.412, 0.62, fz, -Math.PI / 2, 5);
+        spot('shelf', fx - 1.3, fz, Math.PI / 2, 'browse', all);
+      }
     } else if (kind === 'bank') {
       INT.company = 'Fleeca Bank';
       for (let k = 0; k < 3; k++) { const x = -3 + k * 3; rb(2.4, 1.1, 0.8, 0, 0.55, 0, 0, x, -hd + 5, '#2f5a3a', true); rb(2.4, 0.9, 0.05, 0, 1.55, 0.3, 0, x, -hd + 5, '#cfe0e8'); spot('cashier', x, -hd + 5.8, Math.PI, 'stand', all); spot('visit', x, -hd + 4, 0, 'look', all); }
@@ -2079,14 +3103,7 @@ function buildFloor(f) {
   const add = (list, m, shadow = true) => { if (!list.length) return; const mesh = new THREE.Mesh(mergeGeometries(list.map(q => q.index ? q.toNonIndexed() : q)), m); mesh.receiveShadow = shadow; g.add(mesh); };
   add(vc, M.ivcol); add(scr, T.mats.screen, false); add(pan, T.mats.panel, false);
   if (glass.length) g.add(new THREE.Mesh(mergeGeometries(glass), T.mats.glass));
-  if (prods.length) {
-    const pg = prods.map(([px, py, pz, [w, h, d, cyl], cell]) => {
-      const gg = cyl ? new THREE.CylinderGeometry(w / 2, w / 2, h, 12) : new THREE.BoxGeometry(w, h, d), uv = gg.attributes.uv, cu = cell % 8, cv = Math.floor(cell / 8) % 4;
-      for (let i = 0; i < uv.count; i++) uv.setXY(i, (cu + uv.getX(i)) / 8, 1 - (cv + 1 - uv.getY(i)) / 4);
-      gg.translate(px, py + h / 2, pz); return gg.index ? gg.toNonIndexed() : gg;
-    });
-    const pm = new THREE.Mesh(mergeGeometries(pg), new THREE.MeshStandardMaterial({ map: prodAtlas(), roughness: 0.45 })); pm.receiveShadow = true; g.add(pm);
-  }
+  for (const s of prods) stockFinish(s, g); // Regalware, Obst, Fisch, Kühlschrank-Inhalt: wenige InstancedMeshes
   F.rooms = rooms;
   if (myHotelFloor(F) && rooms.length) {
     const q = rooms[player.hotel.room % rooms.length], bed = spots.find(sp => sp.type === 'bed' && sp.room === q);
@@ -2828,7 +3845,7 @@ function updateICop(n, F, dt, plx, plz) {
 const CRIME = { theft: 'Ladendiebstahl', carjack: 'Autodiebstahl', shooting: 'Schüsse gemeldet', murder: 'Tötungsdelikt', hitrun: 'Fahrerflucht', assault: 'Körperverletzung' };
 let pendingCall = null;
 function reportCrime(type, x, z, stars, indoor = false) {
-  const copSaw = cars.some(c => c.cop && Math.hypot(c.x - x, c.z - z) < 60 && lineOfSight(c.x, c.z, x, z)) || officers.some(o => o.state !== 'dead' && Math.hypot(o.x - x, o.z - z) < 50);
+  const copSaw = cars.some(c => c.cop && c.mode !== 'wreck' && Math.hypot(c.x - x, c.z - z) < 60 && lineOfSight(c.x, c.z, x, z)) || officers.some(o => o.state !== 'dead' && Math.hypot(o.x - x, o.z - z) < 50 && lineOfSight(o.x, o.z, x, z));
   if (copSaw) { addWanted(0, Math.max(wanted, stars)); return; }
   if (wanted >= stars) { lastSeen.x = x; lastSeen.z = z; return; }
   if (pendingCall && pendingCall.stars >= stars) return;
@@ -2843,8 +3860,8 @@ function updateCrimeCalls(dt) {
   const c = pendingCall; if (!c) return;
   c.t -= dt;
   if (c.w.state === 'dead') { pendingCall = null; return; }
-  if (c.phase === 'call' && c.t < 3 && !c.said) { c.said = true; if (Math.hypot((c.w.wx ?? c.w.x) - player.x, (c.w.wz ?? c.w.z) - player.z) < 30) say(LINES.witness[c.type], { who: 'Zeuge (Telefon)', voice: c.w.voice, rate: c.w.vrate, h: c.w.h, prio: true }); }
-  if (c.phase === 'call' && c.t <= 0) { c.phase = 'radio'; c.t = rnd(3, 5); if (scannerOn || Math.hypot(c.x - player.x, c.z - player.z) < 220) say(`Zentrale an alle Einheiten: ${CRIME[c.type]} in ${c.d}. Verdächtiger flüchtig.`, { who: 'Polizeifunk', radio: true, color: '#6fa8ff', prio: true }); }
+  if (c.phase === 'call' && c.t < 3 && !c.said) { c.said = true; if (Math.hypot((c.w.wx ?? c.w.x) - player.x, (c.w.wz ?? c.w.z) - player.z) < 30) say(pick(LINES.witness[c.type]), { who: 'Zeuge (Telefon)', voice: c.w.voice, rate: c.w.vrate, h: c.w.h, prio: true }); }
+  if (c.phase === 'call' && c.t <= 0) { c.phase = 'radio'; c.t = rnd(3, 5); if (scannerOn || Math.hypot(c.x - player.x, c.z - player.z) < 220) say(pick(CRIME_RADIO).replace('{c}', CRIME[c.type]).replace('{d}', c.d), { who: 'Polizeifunk', radio: true, color: '#6fa8ff', prio: true }); }
   else if (c.phase === 'radio' && c.t <= 0) {
     if (wanted < c.stars) { const before = wanted; wanted = c.stars; lastSeen.x = c.x; lastSeen.z = c.z; lastSeen.bld = c.bld; lastSeen.foot = c.foot; lastSeen.car = null; wantedCool = 1.5; if (before === 0) { notice('GESUCHT!', 1500); say(pick(LINES.chars[cur].cops), { who: CHARS[cur].name, color: CHARS[cur].col }); } }
     if (c.w.task?.type === 'calling') { c.w.task = null; c.w.wait = 0; }
@@ -2855,7 +3872,7 @@ function busted() {
   if (player.dead) return;
   player.bustStars = Math.max(1, wanted);
   player.dead = 4.5; player.bust = true; $('wasted').querySelector('b').textContent = 'VERHAFTET'; $('wasted').classList.add('bust'); $('wasted').style.display = 'flex';
-  sfx.wasted(); if (player.car) exitCar(true);
+  sfx.wasted(); abortSeq(); if (player.car) exitCar(true);
 }
 // Einsatzleitung: Streifen auffüllen, Einheiten zuteilen, Verstärkung von der Wache
 let dispatchT = 0, hqT = 0;
@@ -2930,7 +3947,7 @@ function fade(on) { $('fade').classList.toggle('on', on); }
 function die() {
   closeMenu(); INT.menu = null; INT.panelMode = false; INT.pressed = null; player.h.group.visible = true;
   player.dead = 5; $('wasted').style.display = 'flex'; sfx.wasted();
-  if (player.car) exitCar(true);
+  abortSeq(); if (player.car) exitCar(true);
 }
 function respawn() {
   $('wasted').style.display = 'none';
@@ -2965,6 +3982,7 @@ function switchChar(i) {
   if (i === cur || switching || player.dead || !started) return;
   if (player.ride) { notice('Erst die Fahrt beenden', 1600); return; }
   if (player.jail) { notice('Nicht im Gefängnis', 1600); return; }
+  if (seq) return;
   if (wanted > 0) { notice('Wechsel während einer Fahndung nicht möglich', 1800); return; }
   if (INT.inside) { notice('Erst das Gebäude verlassen', 1800); return; }
   if (player.car) exitCar(true);
@@ -3013,12 +4031,22 @@ function useHome() {
 }
 let seq = null;
 function enterCar() {
-  if (seq) return;
+  if (seq || INT.inside || player.rag || player.dead) return;
   let best = null, bd = 4.5;
   for (const c of cars) { if (c.mode === 'wreck' || c.mode === 'service' || c.type === 'police' || c.npcSeq) continue; const [dx, dz] = doorPoint(c); const d = Math.hypot(dx - player.x, dz - player.z); if (d < bd) { bd = d; best = c; } }
   if (!best) return;
   if (best.mode === 'ai') { best.ai.speed = 0; best.mode = 'held'; }
   seq = { type: 'enter', car: best, t: 0, phase: 'walk' };
+}
+// Ein-/Ausstieg abbrechen (Tod, Verhaftung): sonst bleibt seq hängen und setzt den Spieler nach dem Respawn ins alte Auto
+function abortSeq() {
+  const q = seq; if (!q) return; seq = null;
+  const c = q.car, h = player.h; c.doors[0].target = 0;
+  if (q.type === 'enter') {
+    if (c.driver === h) { c.body.remove(h.group); scene.add(h.group); c.driver = null; }
+    if (c.mode === 'held') c.mode = 'abandoned';
+  }
+  h.group.visible = true;
 }
 function exitCar(force = false) {
   const c = player.car; if (!c) return;
@@ -3528,57 +4556,105 @@ document.addEventListener('pointerlockchange', () => {
 $('pause').addEventListener('click', () => canvas.requestPointerLock());
 
 // ---------- Dialoge & Untertitel ----------
+// Wiederholungsschutz: pick(LINES.x) liefert dieselbe Zeile nie direkt nochmal (Verlauf je Liste).
+// extra(): optionale Zusatzzeilen (z.B. Tageszeit), die zur Liste gemischt werden.
+const FRESH = Symbol('fresh');
+function pickFresh(arr, hist, extra) {
+  const pool = extra ? arr.concat(extra() || []) : arr;
+  if (pool.length <= 1) return pool[0];
+  const keep = Math.max(1, Math.min(6, Math.floor(pool.length / 3)));
+  let i, n = 0;
+  do { i = Math.floor(Math.random() * pool.length); } while (hist.q.includes(pool[i]) && ++n < 40);
+  hist.q.push(pool[i]); while (hist.q.length > keep) hist.q.shift();
+  return pool[i];
+}
+function freshList(arr, extra) {
+  const hist = { q: [] };
+  return new Proxy(arr, {
+    get(t, k) {
+      if (k === FRESH) return true;
+      if (typeof k === 'string' && /^\d+$/.test(k)) return pickFresh(t, hist, extra);
+      const v = Reflect.get(t, k); return typeof v === 'function' ? v.bind(t) : v;
+    },
+  });
+}
+function freshAll(o) {
+  for (const k of Object.keys(o)) {
+    const v = o[k];
+    if (Array.isArray(v) && !v[FRESH]) { if (v.every(x => typeof x === 'string' || (Array.isArray(x) && typeof x[0] === 'string'))) o[k] = freshList(v); else v.forEach(freshAll); }
+    else if (v && typeof v === 'object' && !Array.isArray(v)) freshAll(v);
+  }
+}
 const LINES = {
   chars: [
-    { hello: ['Na gut, zurück an die Arbeit.', 'Los Santos, ich bin wieder da.', 'Zeit, ein bisschen Geld zu machen, Homie.'], cops: ['Oh Mann, die Bullen!', 'Nicht schon wieder, Mann!', 'Ich muss hier weg!'] },
-    { hello: ['Ich hätte im Ruhestand bleiben sollen.', 'Noch ein schöner Tag im Paradies.', 'Mal sehen, was die Familie wieder angestellt hat.'], cops: ['Ich bin zu alt für so was.', 'Ganz ruhig, Michael. Ganz ruhig.', 'Wie in alten Zeiten.'] },
-    { hello: ['Wer hat mich geweckt?!', 'Heute wird es lustig.', 'Ich bin völlig entspannt. Wirklich.'], cops: ['Kommt doch her, ihr Clowns!', 'Endlich passiert mal was!', 'Ihr wollt Ärger? Den kriegt ihr!'] },
+    { // Franklin
+      hello: ['Na gut, zurück an die Arbeit.', 'Los Santos, ich bin wieder da.', 'Zeit, ein bisschen Geld zu machen, Homie.', 'Okay, ganz entspannt. Mal sehen, was heute geht.', 'Grove Street, für immer. Aber erst mal Kaffee.', 'Die Miete zahlt sich nicht von selbst.', 'Ich brauch einen Plan. Oder wenigstens einen Burger.', 'Noch ein Tag, noch ein Dollar.', 'Lamar hat bestimmt wieder eine Superidee. Na toll.', 'Heute wird nichts Dummes gemacht. Versprochen.', 'Okay, Franklin. Reiß dich zusammen und mach was draus.', 'Die Stadt schläft nie, und ich auch nicht.', 'Mal sehen, wer heute Ärger macht.', 'Ich brauche dringend mehr Geld und weniger Stress.', 'Auf geht es. Die Straße wartet nicht.', 'Moin, Los Santos. Zeig mir, was du hast.'],
+      cops: ['Oh Mann, die Bullen!', 'Nicht schon wieder, Mann!', 'Ich muss hier weg!', 'Verdammt, die haben mich gesehen!', 'Das gibt Ärger, großen Ärger!', 'Bleib ruhig, Franklin, bleib ruhig.', 'Immer ich! Warum immer ich?', 'Die Cops sind echt überall hier.', 'Okay, okay, jetzt wird es heiß.', 'Ich hab meine Bewährung echt nicht für so was.', 'Los, Franklin, lauf, lauf, lauf!', 'Die kriegen mich nie, nie im Leben.', 'Ach komm, nicht in meinem Viertel!', 'Wenn die mich kriegen, bin ich erledigt.', 'Warum kann nie was einfach laufen?', 'Auf geht es, zeig denen mal, was du kannst.'] },
+    { // Michael
+      hello: ['Ich hätte im Ruhestand bleiben sollen.', 'Noch ein schöner Tag im Paradies.', 'Mal sehen, was die Familie wieder angestellt hat.', 'Ein Mann in meinem Alter sollte eigentlich Golf spielen.', 'Mein Therapeut sagt, ich soll mehr rausgehen. Na gut.', 'Die Kinder sind in der Schule. Zumindest hoffe ich das.', 'Was für ein Tag. Und noch nicht mal Mittag.', 'Ich brauche einen Kaffee und einen guten Anwalt.', 'Das Leben ist schön, wenn man nicht darüber nachdenkt.', 'Amanda hat bestimmt wieder neue Rechnungen.', 'Ich bin hier, ich lebe, ich bin aufgeregt. Na ja, fast.', 'Immerhin scheint die Sonne. Das ist schon was.', 'Okay, Michael, noch ein Versuch, ein normaler Mensch zu sein.', 'Früher war ich mal ein Profi. Heute bin ich ein Pool-Besitzer.', 'Die Midlife-Crisis hat wenigstens eine schöne Aussicht.', 'Also gut. Auf in den nächsten Fehler.'],
+      cops: ['Ich bin zu alt für so was.', 'Ganz ruhig, Michael. Ganz ruhig.', 'Wie in alten Zeiten.', 'Na wunderbar, genau das hat noch gefehlt.', 'Das hab ich schon mal erlebt. Es endete nicht gut.', 'Die Polizei, natürlich. Wer sonst.', 'Mein Herz macht das nicht mehr lange mit.', 'Ich hasse es, wenn Leute hinter mir herrennen.', 'Das war definitiv nicht im Plan.', 'Kann man nicht ein einziges Mal in Ruhe leben?', 'Okay, das nennt man dann wohl Ruhestand.', 'Ich werde das hier bereuen, ich wette.', 'Das gibt wieder Streit mit Amanda.', 'Na los, versuchen wir es mal auf die professionelle Art.', 'Ich kenne zwei, drei Tricks, die ihr noch nicht kennt.', 'Leute, ich hab das schon bei Besseren erlebt.'] },
+    { // Trevor
+      hello: ['Wer hat mich geweckt?!', 'Heute wird es lustig.', 'Ich bin völlig entspannt. Wirklich.', 'Guten Morgen, Welt. Ihr habt mich vermisst, ich weiß.', 'Ich rieche Chaos. Wunderbar!', 'Hat jemand was gegen meine gute Laune? Dann soll er vortreten.', 'Mein Kopf brummt, aber das ist normal.', 'Heute geht es um Spaß. Und ein bisschen um Gewalt.', 'Ah, frische Luft! Und der Geruch von Benzin. Perfekt.', 'Ich bin gerade in einer ausgezeichneten Stimmung. Lauft!', 'Wer braucht schon Therapie, wenn man Explosionen hat?', 'Philip, Philip, mein Freund, hier kommt Trevor!', 'Sandy Shores ist viel besser als Los Santos. Aber gut.', 'Ich hab dreimal geschlafen. Das reicht für eine Woche.', 'Hallo, Zivilisation. Ich hab leider Hunger.', 'Moment, hab ich den Herd ausgemacht? Egal.'],
+      cops: ['Kommt doch her, ihr Clowns!', 'Endlich passiert mal was!', 'Ihr wollt Ärger? Den kriegt ihr!', 'Hahaha, die Schweine kommen!', 'Ihr kriegt mich nie, ihr Amateure!', 'Wunderbar, ein Tanz mit der Polizei!', 'Ich liebe es, wenn ihr so wütend seid!', 'Na los, schießt doch! Aber zielt bitte!', 'Ich zünde euch gleich eure Streifenwagen an!', 'Diese Stadt braucht mehr Feuer, mehr Krach, mehr Trevor!', 'Dafür bin ich geboren!', 'Zwei Streifenwagen? Ist das alles, was ihr habt?', 'Meine Ex war gefährlicher als ihr!', 'Ich hab euch so vermisst, wirklich!', 'Lauf, Trevor, lauf, es wird lustig!', 'Mich hat noch keiner gekriegt, und ihr seid nicht die Ersten!'] },
   ],
-  ped: ['Schönes Wetter heute, oder?', 'Hast du mal einen Dollar?', 'Ich muss echt mal wieder ins Fitnessstudio.', 'Die Mieten hier sind der Wahnsinn.', 'Hey, cooles Outfit!', 'Mein Agent ruft einfach nicht zurück.', 'Kennst du ein gutes Taco-Lokal hier?', 'Der Verkehr in dieser Stadt bringt mich um.'],
-  bump: ['Hey, pass doch auf!', 'Geht es noch?', 'Augen auf, Mann!', 'Entschuldigung? Hallo?'],
-  scared: ['Nicht schießen!', 'Hilfe! Polizei!', 'Der ist verrückt!', 'Lauf! Lauf!', 'Oh mein Gott!'],
-  carjack: ['Hey! Mein Auto!', 'Das kannst du nicht machen!', 'Ich ruf die Polizei!'],
-  chat: ['Und dann hat er einfach aufgelegt!', 'Hast du das neue Café an der Ecke probiert?', 'Die Stadt wird immer teurer, sag ich dir.', 'Mein Cousin dreht jetzt Imagefilme für Firmen, läuft super.', 'Gehen wir später an den Strand?', 'Ich hatte heute schon drei Castings.'],
-  phone: ['Ja, Schatz, ich bin gleich da.', 'Nein, die Mail hab ich nicht bekommen.', 'Sag dem Chef, ich steck im Stau.', 'Echt jetzt? Das glaub ich nicht!'],
-  intruder: ['Wer sind Sie? Raus aus meiner Wohnung!', 'Hey! Das ist Privatbesitz!', 'Ich ruf gleich die Polizei!'],
+  ped: ['Schönes Wetter heute, oder?', 'Hast du mal einen Dollar?', 'Ich muss echt mal wieder ins Fitnessstudio.', 'Die Mieten hier sind der Wahnsinn.', 'Hey, cooles Outfit!', 'Mein Agent ruft einfach nicht zurück.', 'Kennst du ein gutes Taco-Lokal hier?', 'Der Verkehr in dieser Stadt bringt mich um.',
+    'Ich bin nur wegen der Sonne nach Kalifornien gezogen.', 'Jeder hier ist Schauspieler. Oder Kellner. Oder beides.', 'Haben Sie mal Feuer?', 'Meine Katze hat gestern den Fernseher umgeworfen.', 'Wo kriegt man hier einen anständigen Kaffee?', 'Ich warte seit einer Stunde auf meinen Lieferdienst.', 'Entschuldigung, ist das hier die Bushaltestelle?', 'Diese Stadt ist gleichzeitig toll und anstrengend.', 'Mein Auto ist schon wieder in der Werkstatt.', 'Ich brauche dringend Urlaub.', 'Hast du das Spiel gestern gesehen? Unfassbar.', 'Meine Schwester zieht nach Vinewood. Als ob das was bringt.', 'Ich hab zu viel Geld für Sneaker ausgegeben.', 'Hier gibt es mehr Fitnessstudios als Supermärkte.', 'Den ganzen Tag Sonne. Irgendwann reicht es auch.', 'Mein Chef denkt, ich arbeite gerade. Pssst.', 'Wo war noch mal mein Auto?', 'Ich glaub, ich hab den Herd angelassen.', 'Die Parkplatzsuche ist hier der reinste Krieg.', 'Heute Abend gibt es endlich Pizza.', 'Ich hab keine Ahnung, was ich mit meinem Leben mache.', 'Das ist alles nur noch Marketing, sag ich dir.', 'Hast du schon die Preise für Avocados gesehen?', 'Mein Therapeut ist ausgebucht. Ausgerechnet jetzt.', 'Alle reden über Vinewood, aber hier ist es genauso teuer.', 'Ich hab gestern jemanden gesehen, der sah aus wie ein Star.', 'Mein Handy ist schon wieder leer.', 'Ich muss unbedingt mehr Wasser trinken.', 'Der Typ da drüben starrt mich schon die ganze Zeit an.', 'Ich sollte meine Steuererklärung machen. Später.', 'Wer hat diese Kreisverkehre erfunden?', 'Meine Nachbarn feiern jeden Abend. Jeden!', 'Ich habe heute schon zehntausend Schritte gemacht.', 'Ein Burger Shot wäre jetzt genau richtig.', 'Ich glaub, ich zieh zu meiner Tante nach Sandy Shores.', 'Wieder ein Strafzettel. Das ist ein Komplott.', 'Hier wird einem nichts geschenkt.', 'Mal ehrlich, ohne Auto ist diese Stadt verloren.', 'Gestern sind schon wieder Sirenen die ganze Nacht gefahren.', 'Du siehst aus, als hättest du es eilig.', 'Das ist die beste Stadt der Welt. Sagt zumindest die Werbung.'],
+  pedDay: ['Ich brauche einen Kaffee, und zwar sofort.', 'Mittagspause! Endlich.', 'Die Sonne knallt heute wieder.', 'Ich bin schon seit sechs Uhr auf den Beinen.', 'Heute Nachmittag gehe ich an den Strand.', 'Der Morgenverkehr war wieder die Hölle.', 'Frühstück hatte ich noch nicht. Typisch.', 'Ich muss gleich zu einem Termin.', 'Wenigstens ist es heute nicht so voll.', 'Der Tag fängt ja schon gut an.'],
+  pedNight: ['Wieso bist du um diese Uhrzeit noch draußen?', 'Nachts ist es hier am schönsten.', 'Ich sollte längst im Bett sein.', 'Die Stadt leuchtet wie ein Weihnachtsbaum.', 'Zu spät für Kaffee, zu früh zum Schlafen.', 'Nachts sind hier komische Leute unterwegs. Nichts gegen dich.', 'Ich hab die Bahn verpasst. Wieder mal.', 'Alle Läden zu, na toll.', 'Ich such noch eine Bar, die offen ist.', 'Heute Nacht ist nichts los. Gruselig.'],
+  bump: ['Hey, pass doch auf!', 'Geht es noch?', 'Augen auf, Mann!', 'Entschuldigung? Hallo?', 'Hast du keine Augen im Kopf?', 'Ey, was soll das denn?', 'Du bist wohl blind, oder was?', 'Pass auf, wo du hinrennst!', 'Na vielen Dank auch.', 'Das tat weh, du Idiot!', 'Kannst du nicht aufpassen?', 'Frechheit! So was gibt es nur hier.', 'Immer diese Rempler in dieser Stadt.', 'Ich hab doch Platz gemacht!', 'Mein Kaffee! Mein ganzer Kaffee!', 'Sag mal, hast du was getrunken?', 'Das ist ein Bürgersteig, keine Rennstrecke!', 'Ach, super. Jetzt tut mir die Schulter weh.', 'Nächstes Mal sagst du wenigstens Entschuldigung.', 'Rücksicht ist hier wohl ein Fremdwort.'],
+  scared: ['Nicht schießen!', 'Hilfe! Polizei!', 'Der ist verrückt!', 'Lauf! Lauf!', 'Oh mein Gott!', 'Bitte tu mir nichts!', 'Ich hab Kinder zu Hause!', 'Weg hier, schnell!', 'Jemand soll die Polizei rufen!', 'Das ist nicht echt, das ist nicht echt!', 'Ich will nach Hause!', 'Oh nein, oh nein, oh nein!', 'Alle in Deckung!', 'Er hat eine Waffe!', 'Bitte nicht! Ich gebe dir alles!', 'Ich hab doch gar nichts gemacht!', 'Hilfe, ein Irrer!', 'Geh weg von mir!', 'Das darf doch nicht wahr sein!', 'Rennt! Rennt um euer Leben!', 'Ich wollte nur einkaufen!', 'Das war heute echt nicht mein Tag!', 'Mama! Ich will zu meiner Mama!', 'Ruft einen Krankenwagen!'],
+  carjack: ['Hey! Mein Auto!', 'Das kannst du nicht machen!', 'Ich ruf die Polizei!', 'Das ist mein Wagen, du Dieb!', 'Hilfe, mein Auto wird geklaut!', 'Bitte nicht! Ich hab gerade erst die Raten bezahlt!', 'Na toll, das ging ja schnell.', 'Der Wagen ist nicht mal versichert!', 'Das gibt Ärger, das sag ich dir!', 'Halt! Der Schlüssel gehört mir!', 'Mein Wagen! Mein schöner Wagen!', 'Das ist ein Leihwagen, du Idiot!', 'Ich merk mir dein Gesicht!', 'Mein Hund sitzt noch drin!', 'Bitte, nimm alles, nur nicht mein Auto!'],
+  chat: ['Und dann hat er einfach aufgelegt!', 'Hast du das neue Café an der Ecke probiert?', 'Die Stadt wird immer teurer, sag ich dir.', 'Mein Cousin dreht jetzt Imagefilme für Firmen, läuft super.', 'Gehen wir später an den Strand?', 'Ich hatte heute schon drei Castings.', 'Hast du Lust auf Tacos heute Abend?', 'Meine Vermieterin hat die Miete schon wieder erhöht.', 'Ich hab gehört, in Vinewood gibt es eine neue Bar.', 'Er hat mich auf der Hochzeit total blamiert.', 'Wir sollten mal wieder zusammen kochen.', 'Hast du die Nachrichten gesehen? Schon wieder Verfolgungsjagd.', 'Mein Chef meint, ich soll Überstunden machen.', 'Ich überleg, ob ich mir einen Hund hole.', 'Der Typ von nebenan ist ein totaler Nerd.', 'Meine Mutter ruft jeden Tag an, unfassbar.', 'Hast du schon deinen Urlaub gebucht?', 'Ich sag es dir, das war echt unglaublich.', 'Ich kann nicht mehr, ich brauch ein Wochenende.', 'Wie war dein Date gestern?', 'Meine neue Wohnung hat einen Balkon!', 'Wir müssen unbedingt mal in den Freizeitpark.', 'Er hat tatsächlich gesagt, er sei Musikproduzent.', 'Ich glaub, der Kellner hat mich erkannt.', 'Mit dem Auto brauchst du hier eine Ewigkeit.', 'Ich lasse mir ein Tattoo stechen. Nur ein kleines.', 'Ach komm, das sagst du jedes Mal!', 'Der neue Film soll echt gut sein.', 'Ich brauch mehr Schlaf, ernsthaft.', 'Das glaubt dir doch kein Mensch.', 'Erzähl, was ist dann passiert?', 'Echt jetzt? Das ist doch nicht dein Ernst!', 'Ich würd ja gern, aber ich hab kein Geld.', 'Du schuldest mir noch zwanzig Dollar!', 'Lass uns einfach Pizza bestellen.', 'Hast du die Preise im neuen Supermarkt gesehen?', 'Der Strand ist heute bestimmt wieder überfüllt.', 'Ich hab mir den Fuß gestoßen, schau mal.', 'Gestern habe ich Michael aus dem Fernsehen gesehen, glaub ich.'],
+  phone: ['Ja, Schatz, ich bin gleich da.', 'Nein, die Mail hab ich nicht bekommen.', 'Sag dem Chef, ich steck im Stau.', 'Echt jetzt? Das glaub ich nicht!', 'Hallo? Hallo? Ich hör dich kaum!', 'Nein, ich komme nicht zur Party.', 'Ja, ich hab es dir doch gestern gesagt.', 'Ich ruf dich später zurück, ich bin unterwegs.', 'Kannst du bitte Milch mitbringen?', 'Moment, ich muss kurz den Ton lauter machen.', 'Das ist nicht mein Problem, das ist deins.', 'Wie, du bist schon wieder pleite?', 'Ich bin gleich im Meeting, ich muss auflegen.', 'Nein, das habe ich so nicht gesagt.', 'Ja, ich bin im Park, direkt neben dem Brunnen.', 'Hör mal, ich kann jetzt nicht reden.', 'Ich muss noch tanken, dann bin ich da.', 'Okay, okay, ich komm ja schon.', 'Hast du schon was gegessen?', 'Mama, ich bin erwachsen, mir geht es gut.', 'Ich schick dir gleich das Foto.', 'Lass uns das Ganze morgen besprechen.', 'Nein, ich hab das Konto nicht überzogen!', 'Ja, kauf einfach die blaue Version.'],
+  intruder: ['Wer sind Sie? Raus aus meiner Wohnung!', 'Hey! Das ist Privatbesitz!', 'Ich ruf gleich die Polizei!', 'Wie sind Sie hier reingekommen?', 'Verschwinden Sie sofort!', 'Ich habe einen Hund und der beißt!', 'Hilfe, ein Einbrecher!', 'Das ist ein Hausfriedensbruch!', 'Schatz, ruf die Polizei, hier ist ein Fremder!', 'Raus! Raus, sonst hole ich meinen Baseballschläger!', 'Haben Sie geklingelt? Nein? Dann raus!', 'Ich zeige Sie an, das schwöre ich!', 'Mein Mann ist Anwalt, der macht Sie fertig!', 'Hier gibt es nichts zu holen!', 'Was wollen Sie in meinem Wohnzimmer?', 'Verlassen Sie sofort mein Haus!'],
   inside: {
-    worker: ['Das Meeting hätte auch eine E-Mail sein können.', 'Hast du den Bericht schon gesehen?', 'Noch drei Stunden bis Feierabend.', 'Der Kaffee hier ist furchtbar.', 'Sie arbeiten nicht hier, oder?'],
-    resident: ['Wer sind Sie? Raus hier!', 'Ich hab Sie nicht reingelassen!'],
-    reception: ['Willkommen bei {co}. Haben Sie einen Termin?', 'Die Aufzüge sind direkt hinter mir.', 'Bitte tragen Sie sich ins Besucherbuch ein.'],
-    cashier: ['Hallo! Brauchen Sie eine Tüte?', 'Das macht dann zwölf Dollar fünfzig.', 'Wir schließen um Mitternacht.'],
-    customer: ['Wo finde ich hier die Chips?', 'Alles so teuer geworden.'],
-    nurse: ['Bitte leise, hier schlafen Patienten.', 'Die Besuchszeit ist gleich vorbei.'],
-    patient: ['Ich will einfach nur nach Hause.', 'Haben Sie Schokolade dabei?'],
-    visitor: ['Ich warte auf meinen Termin.', 'Wissen Sie, in welchem Stock die Buchhaltung ist?'],
+    worker: ['Das Meeting hätte auch eine E-Mail sein können.', 'Hast du den Bericht schon gesehen?', 'Noch drei Stunden bis Feierabend.', 'Der Kaffee hier ist furchtbar.', 'Sie arbeiten nicht hier, oder?', 'Ich warte seit Tagen auf die Freigabe.', 'Der Drucker spinnt schon wieder.', 'Bitte stören Sie mich nicht, ich habe eine Deadline.', 'Wissen Sie, wo der Kopierer ist?', 'Mein Computer hat sich gerade aufgehängt.', 'Dienstag ist der schlimmste Tag der Woche.', 'Die Klimaanlage ist wieder ausgefallen.', 'Wir müssen die Zahlen noch mal prüfen.', 'Haben Sie einen Termin mit der Geschäftsführung?', 'Das Büro ist heute leer, alle sind im Homeoffice.', 'Ich habe schon wieder meine Karte vergessen.'],
+    resident: ['Wer sind Sie? Raus hier!', 'Ich hab Sie nicht reingelassen!', 'Das ist meine Wohnung, verschwinden Sie!', 'Ich habe nichts bestellt, gehen Sie bitte!', 'Wie sind Sie am Pförtner vorbeigekommen?', 'Ich hab gleich Besuch. Gehen Sie bitte.', 'Kennen wir uns? Ich glaube nicht.', 'Unsere Hausordnung gilt auch für Sie!'],
+    reception: ['Willkommen bei {co}. Haben Sie einen Termin?', 'Die Aufzüge sind direkt hinter mir.', 'Bitte tragen Sie sich ins Besucherbuch ein.', 'Guten Tag und willkommen bei {co}.', 'Wen darf ich Ihnen melden?', 'Der Aufzug ist gleich dort drüben.', 'Falls Sie etwas brauchen, sagen Sie Bescheid.', 'Einen schönen Tag bei {co}!', 'Ich kann Sie leider nicht ohne Termin durchlassen.', 'Der Fahrstuhl fährt bis ganz nach oben.', 'Entschuldigen Sie bitte, mein Telefon klingelt.', 'Haben Sie einen Besucherausweis?'],
+    cashier: ['Hallo! Brauchen Sie eine Tüte?', 'Das macht dann zwölf Dollar fünfzig.', 'Wir schließen um Mitternacht.', 'Haben Sie eine Kundenkarte?', 'Bar oder mit Karte?', 'Der Nächste, bitte!', 'Heute im Angebot: alles, was abläuft.', 'Brauchen Sie noch etwas?', 'Haben Sie alles gefunden?', 'Die Preise mache ich nicht, ich arbeite hier nur.', 'Schönen Tag noch, und kommen Sie bald wieder!', 'Möchten Sie noch einen Kaugummi dazu?'],
+    customer: ['Wo finde ich hier die Chips?', 'Alles so teuer geworden.', 'Die Auswahl hier ist ein Witz.', 'Ich such schon eine halbe Stunde nach Milch.', 'Haben die hier auch glutenfreies Brot?', 'Drei Dollar für einen Apfel? Das ist Raub.', 'Entschuldigung, wissen Sie, wo die Taco-Soße steht?', 'Immer wenn ich komme, ist die Schlange lang.', 'Das Sonderangebot ist doch nur ein Trick.', 'Ich wollte eigentlich nur eine Sache kaufen.', 'Gibt es das auch in Bio?', 'Mein Einkaufswagen quietscht schon wieder.'],
+    nurse: ['Bitte leise, hier schlafen Patienten.', 'Die Besuchszeit ist gleich vorbei.', 'Bitte folgen Sie mir nicht auf die Station.', 'Hier dürfen Sie nicht rein.', 'Kann ich Ihnen helfen? Sie sehen verwirrt aus.', 'Die Notaufnahme ist wie immer überfüllt.', 'Haben Sie einen Termin beim Arzt?', 'Bitte desinfizieren Sie sich die Hände.'],
+    patient: ['Ich will einfach nur nach Hause.', 'Haben Sie Schokolade dabei?', 'Das Essen hier schmeckt nach nichts.', 'Wann kommt endlich der Arzt?', 'Mein Rücken bringt mich noch um.', 'Ich liege jetzt schon die dritte Nacht hier.', 'Die Schwestern hier sind eigentlich ganz nett.', 'Haben Sie die Fernbedienung gesehen? Ich finde sie nicht.'],
+    visitor: ['Ich warte auf meinen Termin.', 'Wissen Sie, in welchem Stock die Buchhaltung ist?', 'Ich bin schon das dritte Mal hier.', 'Die haben mich einfach warten lassen.', 'Sind Sie auch wegen des Vorstellungsgesprächs hier?', 'Ich bin ein bisschen nervös.', 'Gibt es hier irgendwo eine Toilette?', 'Das Wartezimmer ist ja mal richtig voll.'],
   },
   witness: {
-    theft: 'Ja, Polizei? Hier im Laden wurde gerade geklaut!', carjack: 'Hallo, Polizei? Hier wurde gerade ein Auto geklaut!', shooting: 'Polizei? Hier wird geschossen! Kommen Sie schnell!', murder: 'Hilfe, hier wurde jemand umgebracht! Schicken Sie jemanden!', hitrun: 'Ein Auto hat gerade jemanden überfahren und ist abgehauen!', assault: 'Hier prügelt einer auf Leute ein, kommen Sie bitte!' },
-  arrest: ['Hände hoch! Sie sind verhaftet!', 'Keine Bewegung! Auf den Boden!'],
-  hq: ['Zentrale: Einheit verlässt die Wache, unterwegs zum Einsatzort.', 'Verstärkung von der Wache ist unterwegs.'],
-  redlight: ['Zentrale, Rotlichtverstoß beobachtet. Wir halten das Fahrzeug an.', 'Fahrzeug ist über Rot gefahren, nehmen die Verfolgung auf.'],
-  shoplift: ['Hey! Das musst du bezahlen! Ich rufe die Polizei!', 'Haltet den Dieb! Polizei, schnell!'],
-  prison: ['Kaution ist bezahlt. Raus hier, und lass dich nicht wieder blicken!', 'Die Tür ist offen. Benimm dich da draußen, verstanden?'],
-  bail: ['In Ordnung, ich komme und schließe auf.', 'Kaution ist eingegangen. Ich bin gleich bei dir.'],
-  guardWarn: ['Hey! Finger weg von dem Gitter!', 'Was machst du da hinten? Lass das!'],
-  breakout: ['Alarm! Häftling aus Bolingbroke ausgebrochen! Alle Einheiten!', 'Zentrale an alle: Ausbruch aus dem Gefängnis, Verdächtiger flüchtig.'],
-  surround: ['Verdächtiger ist in ein Gebäude geflüchtet. Wir umstellen den Eingang.', 'Zentrale, Verdächtiger im Gebäude. Wir gehen rein.'],
-  enter: ['Einheiten betreten das Gebäude. Durchsuchen Etage für Etage.', 'Wir sind drin. Sichern das Erdgeschoss.'],
-  found: ['Da ist er! Stehen bleiben!', 'Polizei! Hände hoch!', 'Hier drüben, ich hab ihn!'],
+    theft: ['Ja, Polizei? Hier im Laden wurde gerade geklaut!', 'Hallo, ich möchte einen Diebstahl melden, jetzt gerade!', 'Polizei? Da klaut einer, ich seh es genau!', 'Schicken Sie jemanden, hier wurde gerade etwas gestohlen!'],
+    carjack: ['Hallo, Polizei? Hier wurde gerade ein Auto geklaut!', 'Jemand hat gerade mit Gewalt ein Auto genommen!', 'Polizei! Ein Autodieb, er ist in einem gestohlenen Wagen unterwegs!', 'Ein Mann hat gerade einen Fahrer aus dem Auto gezerrt!'],
+    shooting: ['Polizei? Hier wird geschossen! Kommen Sie schnell!', 'Ich höre Schüsse! Bitte kommen Sie sofort!', 'Hier ist eine Schießerei, schicken Sie alle Einheiten!', 'Da schießt einer wild um sich, ich verstecke mich!'],
+    murder: ['Hilfe, hier wurde jemand umgebracht! Schicken Sie jemanden!', 'Da liegt eine Leiche, ich glaube, es war Mord!', 'Polizei, es gab einen Todesfall, und der Täter ist noch da!', 'Jemand wurde erschossen, schicken Sie bitte einen Krankenwagen!'],
+    hitrun: ['Ein Auto hat gerade jemanden überfahren und ist abgehauen!', 'Fahrerflucht! Er hat einen Fußgänger erwischt!', 'Polizei, ein Wagen hat jemanden angefahren und ist weg!', 'Da liegt ein Verletzter, der Fahrer ist einfach weitergefahren!'],
+    assault: ['Hier prügelt einer auf Leute ein, kommen Sie bitte!', 'Da wird jemand zusammengeschlagen, bitte beeilen Sie sich!', 'Polizei, hier ist eine Schlägerei, und die wird schlimmer!', 'Ein Mann greift Passanten an, kommen Sie sofort!'] },
+  arrest: ['Hände hoch! Sie sind verhaftet!', 'Keine Bewegung! Auf den Boden!', 'Das war es für Sie. Hände auf den Rücken!', 'Sie haben das Recht zu schweigen. Nutzen Sie es.', 'Aus die Maus. Umdrehen!', 'Ihre Fahrt endet hier. Legen Sie die Hände an den Kopf!', 'Auf die Knie! Sofort!', 'Jetzt ist Schluss. Sie kommen mit.', 'Nehmen Sie die Hände hoch und bleiben Sie ruhig!', 'Das war es, mein Freund. Handschellen klicken.', 'Ich sagte keine Bewegung!', 'Ihre Flucht ist vorbei.'],
+  hq: ['Zentrale: Einheit verlässt die Wache, unterwegs zum Einsatzort.', 'Verstärkung von der Wache ist unterwegs.', 'Mission Row meldet: Streife rückt aus.', 'Weitere Fahrzeuge von der Wache zugeteilt.', 'Zentrale, Einheit zwei ist auf dem Weg.', 'Wache Davis: Wagen fahren raus, Ankunft in Kürze.', 'Alle verfügbaren Wagen verlassen das Revier.', 'Zentrale, wir rücken mit zwei Fahrzeugen aus.'],
+  redlight: ['Zentrale, Rotlichtverstoß beobachtet. Wir halten das Fahrzeug an.', 'Fahrzeug ist über Rot gefahren, nehmen die Verfolgung auf.', 'Rotlichtsünder vor uns, Blaulicht ist an.', 'Zentrale, ein Fahrer ignoriert das Rotlicht, wir bleiben dran.', 'Der Wagen hat die Ampel überfahren, Verfolgung eingeleitet.', 'Rotlichtverstoß. Das wird teuer für den Fahrer.'],
+  shoplift: ['Hey! Das musst du bezahlen! Ich rufe die Polizei!', 'Haltet den Dieb! Polizei, schnell!', 'Stehen bleiben! Das ist Diebstahl!', 'Ich hab das gesehen! Zahlen oder ich rufe die Polizei!', 'Hey, du! Zurück mit der Ware!', 'Ladendieb! Jemand soll die Polizei rufen!', 'Ich lasse dich nicht damit raus!', 'Das ist ein Überfall auf mein Regal! Polizei!'],
+  prison: ['Kaution ist bezahlt. Raus hier, und lass dich nicht wieder blicken!', 'Die Tür ist offen. Benimm dich da draußen, verstanden?', 'Du bist frei. Aber ich seh dich bald wieder, wetten?', 'Raus mit dir. Und dass ich dich nicht wieder erwische!', 'Deine Sachen sind hinten, dann bist du weg.', 'Schönes Leben noch. Und lass das Klauen.', 'Du hast Glück, dass sie dich rauskaufen.', 'Ab nach Hause. Keine Dummheiten mehr.'],
+  bail: ['In Ordnung, ich komme und schließe auf.', 'Kaution ist eingegangen. Ich bin gleich bei dir.', 'Moment, ich hole die Schlüssel.', 'Ein Anruf vom Anwalt. Na gut, ich komme.', 'Das Geld ist da. Dann wollen wir mal.', 'Okay, okay, ich öffne ja schon.'],
+  guardWarn: ['Hey! Finger weg von dem Gitter!', 'Was machst du da hinten? Lass das!', 'Zurück vom Zaun, sofort!', 'Ich seh dich! Mach keinen Unsinn!', 'Das Gitter ist kein Spielzeug, Freundchen!', 'Noch ein Schritt und es gibt Ärger!', 'Hey, du da! Was hast du vor?', 'Zurück in die Zelle, sonst gibt es Hofgang-Verbot!'],
+  breakout: ['Alarm! Häftling aus Bolingbroke ausgebrochen! Alle Einheiten!', 'Zentrale an alle: Ausbruch aus dem Gefängnis, Verdächtiger flüchtig.', 'Ausbruch in Bolingbroke! Straßensperren einrichten!', 'Ein Häftling ist entkommen, alle Wagen in die Umgebung!', 'Gefängnisalarm! Ein Insasse ist flüchtig.', 'Alle Einheiten: Entflohener Häftling, gilt als gefährlich.'],
+  surround: ['Verdächtiger ist in ein Gebäude geflüchtet. Wir umstellen den Eingang.', 'Zentrale, Verdächtiger im Gebäude. Wir gehen rein.', 'Gebäude wird umstellt. Niemand kommt raus.', 'Ziel hat sich im Haus verschanzt. Wir sichern alle Ausgänge.', 'Er ist da drin. Alle Zugänge werden abgeriegelt.', 'Zentrale, Verdächtiger in Gebäude verschwunden, wir riegeln ab.', 'Einheiten, bringt euch vor dem Eingang in Stellung.', 'Das Gebäude ist umstellt, wir warten auf Verstärkung.'],
+  enter: ['Einheiten betreten das Gebäude. Durchsuchen Etage für Etage.', 'Wir sind drin. Sichern das Erdgeschoss.', 'Zugriff! Wir gehen rein.', 'Wir durchsuchen jetzt jedes Stockwerk.', 'Eingang gesichert, rücken vor.', 'Streife eins betritt das Gebäude, Rückendeckung bitte.', 'Wir sind im Treppenhaus, nach oben.', 'Wir gehen rein, Waffen bereit.'],
+  found: ['Da ist er! Stehen bleiben!', 'Polizei! Hände hoch!', 'Hier drüben, ich hab ihn!', 'Da! Ich sehe ihn!', 'Stehen bleiben, du Kleinkrimineller!', 'Jetzt hab ich dich!', 'Ich hab ihn! Alle Einheiten hierher!', 'Keine Bewegung, wir haben dich gesehen!'],
   ride: {
-    taxi: ['Taxi! Steig ein, Kumpel.', 'Hier ist dein Taxi. Hinten ist zu, setz dich nach vorne.', 'Na, wo soll es hingehen?'],
-    chauffeur: ['Guten Tag. Bitte sehr, steigen Sie ein.', 'Ihr Wagen ist bereit. Darf ich Ihnen die Tür aufhalten?', 'Willkommen an Bord. Bitte einsteigen.'],
-    where: ['Wohin soll es gehen? Markieren Sie das Ziel einfach auf der Karte.', 'Sag mir wohin, setz einfach einen Punkt auf der Karte.'],
-    go: ['Alles klar, wir fahren los.', 'Sehr gerne, ich bringe Sie hin.', 'Okay, das kenne ich. Lehn dich zurück.'],
-    stop: ['Kein Problem, ich halte hier vorne an.', 'Alles klar, ich fahre rechts ran.'],
-    bye: ['Danke und einen schönen Tag noch!', 'Wir sind da. Beehren Sie uns bald wieder.', 'Hier sind wir. Pass auf dich auf.'],
-    noPay: ['Du kannst nicht zahlen? Ich rufe die Polizei!', 'Hey! Erst fahren und dann nicht zahlen? Polizei!'],
-    dispatch: ['Downtown Cab, guten Tag. Wir schicken sofort einen Wagen zu Ihnen.', 'Ihr Fahrer ist gleich bei Ihnen. Vielen Dank für Ihre Buchung.'],
+    taxi: ['Taxi! Steig ein, Kumpel.', 'Hier ist dein Taxi. Hinten ist zu, setz dich nach vorne.', 'Na, wo soll es hingehen?', 'Dein Taxi ist da, spring rein!', 'Taxi nach Los Santos und Umgebung. Rein mit dir!', 'Du hast ein Taxi bestellt? Hier bin ich.', 'Steig ein, ich hab nicht ewig Zeit.', 'Hallo, Freund. Hinten ist ein bisschen unordentlich, nimm vorn Platz.'],
+    chauffeur: ['Guten Tag. Bitte sehr, steigen Sie ein.', 'Ihr Wagen ist bereit. Darf ich Ihnen die Tür aufhalten?', 'Willkommen an Bord. Bitte einsteigen.', 'Guten Tag, der Wagen steht für Sie bereit.', 'Es ist mir ein Vergnügen. Bitte nehmen Sie Platz.', 'Ihr Chauffeur zu Diensten. Wohin darf es gehen?', 'Bitte sehr, die Tür ist offen.', 'Guten Tag. Machen Sie es sich bequem.'],
+    where: ['Wohin soll es gehen? Markieren Sie das Ziel einfach auf der Karte.', 'Sag mir wohin, setz einfach einen Punkt auf der Karte.', 'Wohin darf es gehen? Setzen Sie ein Ziel auf der Karte.', 'Wo soll ich dich hinbringen? Markier es auf der Karte.', 'Ich brauche ein Ziel. Nimm die Karte und setz einen Punkt.', 'Okay, und wohin? Ich warte auf deinen Kartenpunkt.'],
+    go: ['Alles klar, wir fahren los.', 'Sehr gerne, ich bringe Sie hin.', 'Okay, das kenne ich. Lehn dich zurück.', 'Kein Problem, das ist nicht weit.', 'Alles klar, Anschnallen und ab geht es.', 'Verstanden. Das Ziel ist notiert.', 'Gute Wahl. Dann mal los.', 'Dann bringe ich Sie mal sicher dorthin.'],
+    stop: ['Kein Problem, ich halte hier vorne an.', 'Alles klar, ich fahre rechts ran.', 'Wie du willst, ich halte an.', 'Ich fahre an den Rand, einen Moment.', 'Selbstverständlich, ich halte sofort.', 'Okay, hier bleib ich stehen.'],
+    bye: ['Danke und einen schönen Tag noch!', 'Wir sind da. Beehren Sie uns bald wieder.', 'Hier sind wir. Pass auf dich auf.', 'Endstation. Mach es gut, Kumpel.', 'Wir sind am Ziel. Danke für die Fahrt.', 'Ankunft. Einen guten Tag noch!', 'So, das war es. Bis zum nächsten Mal.', 'Bitte sehr, wir sind da. Gute Geschäfte!'],
+    noPay: ['Du kannst nicht zahlen? Ich rufe die Polizei!', 'Hey! Erst fahren und dann nicht zahlen? Polizei!', 'Kein Geld? Das gibt eine Anzeige!', 'Du schuldest mir die Fahrt! Ich rufe die Polizei!', 'Das ist Betrug, ich melde dich!', 'Bezahl oder ich hol die Cops!'],
+    dispatch: ['Downtown Cab, guten Tag. Wir schicken sofort einen Wagen zu Ihnen.', 'Ihr Fahrer ist gleich bei Ihnen. Vielen Dank für Ihre Buchung.', 'Wir haben Ihre Bestellung. Der Wagen ist unterwegs.', 'Guten Tag, ein Fahrzeug ist bereits auf dem Weg zu Ihnen.', 'Vielen Dank für Ihren Anruf. In wenigen Minuten ist jemand da.', 'Downtown Cab, wir kümmern uns darum. Einen Moment.'],
   },
-  mega: ['Halt! Polizei!', 'Hände hoch und auf den Boden!', 'Fahrzeug sofort anhalten!', 'Waffe fallen lassen!'],
-  radio: ['Zentrale an alle Einheiten: Verdächtiger flüchtig.', 'Einheit zwölf, Verdächtiger in Sichtweite, nehmen Verfolgung auf.', 'Brauchen Verstärkung, Code drei!', 'Alle Einheiten: Schüsse gemeldet.', 'Verdächtiger fährt mit hoher Geschwindigkeit.'],
-  radioLost: ['Sichtkontakt verloren, suchen das Gebiet ab.', 'Kein Sichtkontakt. Letzte bekannte Position wird abgesucht.'],
+  mega: ['Halt! Polizei!', 'Hände hoch und auf den Boden!', 'Fahrzeug sofort anhalten!', 'Waffe fallen lassen!', 'Sie sind umstellt! Ergeben Sie sich!', 'Fahren Sie rechts ran und steigen Sie aus!', 'Stellen Sie den Motor ab!', 'Aussteigen, mit erhobenen Händen!', 'Leisten Sie keinen Widerstand!', 'Hier spricht die Polizei. Bleiben Sie stehen!', 'Das ist Ihre letzte Warnung!', 'Legen Sie die Waffe auf den Boden!', 'Bleiben Sie, wo Sie sind!', 'Sie können nicht entkommen!', 'Zeigen Sie uns Ihre Hände!', 'Anhalten! Das ist ein Befehl!'],
+  radio: ['Zentrale an alle Einheiten: Verdächtiger flüchtig.', 'Einheit zwölf, Verdächtiger in Sichtweite, nehmen Verfolgung auf.', 'Brauchen Verstärkung, Code drei!', 'Alle Einheiten: Schüsse gemeldet.', 'Verdächtiger fährt mit hoher Geschwindigkeit.', 'Hier Einheit vier, wir sind direkt dahinter.', 'Verdächtiger hat die Fahrbahn gewechselt, bleiben dran.', 'Zentrale, brauchen einen Hubschrauber, Verdächtiger ist schnell.', 'Alle Wagen, Straßensperre vorbereiten.', 'Verdächtiger hat gerade eine rote Ampel überfahren.', 'Zentrale, wir verlieren ihn in der Kurve.', 'Verfolgung läuft, Verdächtiger ignoriert alle Anweisungen.', 'Einheit sieben, wir sind beim Verdächtigen.', 'Achtung, Verdächtiger könnte bewaffnet sein.', 'Wagen drei, nehmt die Seitenstraße!', 'Verdächtiger fährt über den Bürgersteig, Vorsicht, Passanten!', 'Zentrale, Fahrzeug rammt Absperrung.', 'Verfolgung eskaliert, fordern weitere Einheiten an.', 'Verdächtiger flüchtet zu Fuß, nehmen die Verfolgung auf.', 'Zentrale, hier Einheit neun: Er kommt direkt auf uns zu.', 'Bitte um Unterstützung, Verdächtiger widersetzt sich.', 'Alle Einheiten, Verdächtiger trägt dunkle Kleidung.', 'Zentrale, Fahndung läuft auf Hochtouren.', 'Verdächtiger hat ein Hindernis gerammt, nähern uns.'],
+  radioLost: ['Sichtkontakt verloren, suchen das Gebiet ab.', 'Kein Sichtkontakt. Letzte bekannte Position wird abgesucht.', 'Wir haben ihn verloren. Alle Einheiten schwärmen aus.', 'Verdächtiger ist uns entwischt, wir suchen weiter.', 'Kein Kontakt mehr. Fahrzeuge an allen Ausfallstraßen.', 'Zentrale, er ist weg. Wir kämmen die Gegend durch.', 'Wir haben nichts mehr. Wo steckt der Kerl?', 'Spur verloren, durchsuchen die Nebenstraßen.', 'Er ist wie vom Erdboden verschluckt.', 'Suchaktion läuft, bitte um Hubschrauberunterstützung.'],
   radioEnd: 'Alle Einheiten: Fahndung eingestellt. Verdächtiger entkommen.',
 };
+{ // Passanten-Sprüche passend zur Tageszeit beimischen
+  const day = LINES.pedDay, night = LINES.pedNight;
+  LINES.ped = freshList(LINES.ped, () => { const h = (gameMin / 60) % 24; return h < 5 || h >= 21 ? night : h >= 7 && h < 19 ? day : null; });
+}
+freshAll(LINES);
 let voices = [];
 try { const lv = () => { voices = speechSynthesis.getVoices(); }; lv(); speechSynthesis.addEventListener('voiceschanged', lv); } catch (e) { /* keine Sprachausgabe */ }
 let speakUntil = 0, subT = null;
@@ -3589,19 +4665,24 @@ async function loadVoices() {
     await Promise.all(Object.keys(VOICE.index).map(async v => { VOICE.bins[v] = await (await fetch(`voices/${v}.bin`)).arrayBuffer(); }));
   } catch (e) { console.warn('Stimmen nicht geladen', e); VOICE.index = null; }
 }
-const VOICE_OF = { FRANKLIN: ['thorsten', 1], MICHAEL: ['karlsson', 1], TREVOR: ['pavoque', 0.97], Franklin: ['thorsten', 1], Michael: ['karlsson', 1], Trevor: ['pavoque', 0.97], Jamal: ['thorsten', 1.1], 'Tante Gloria': ['kerstin', 0.95], 'Lester-Hacker': ['pavoque', 1.06], Polizeifunk: ['karlsson', 1.04], 'Polizei (Megafon)': ['pavoque', 0.95], Angestellte: ['kerstin', 1.1] };
+// Feste Rollenstimmen (Name im say() -> [Stimme, Wiedergaberate]); Hauptfiguren, Kontakte, Funk, Fahrer
+const VOICE_OF = { FRANKLIN: ['franklin', 1], MICHAEL: ['michael', 1], TREVOR: ['trevor', 1], Franklin: ['franklin', 1], Michael: ['michael', 1], Trevor: ['trevor', 1], Jamal: ['jamal', 1], 'Tante Gloria': ['gloria', 1], 'Lester-Hacker': ['lester', 1], Polizeifunk: ['cop_radio', 1.02], Polizei: ['cop_foot', 1], 'Polizei (Megafon)': ['cop_foot', 1], Wärter: ['guard', 1], Taxifahrer: ['taxi', 1], Chauffeur: ['chauffeur', 1], 'Downtown Cab Co.': ['dispatch', 1], 'Chauffeur-Service': ['dispatch', 1], Rezeption: ['f_recep', 1], Angestellte: ['f_young', 1.04] };
+// alte Stimmennamen (aus älteren Aufrufen) -> neue Stimmen
+const VOICE_ALIAS = { thorsten: 'franklin', karlsson: 'taxi', pavoque: 'cop_foot', kerstin: 'f_recep', ramona: 'dispatch' };
+const FEM_ALL = ['f_recep', 'f_young', 'f_eva', 'gloria', 'dispatch'];
 function clipVoice(text, v) {
   const I = VOICE.index; if (!I) return null;
+  v = VOICE_ALIAS[v] || v;
   if (I[v]?.[text]) return v;
-  const same = FEM_V.includes(v) ? FEM_V : MALE_V;
-  return [...same, ...MALE_V, ...FEM_V].find(o => I[o]?.[text]) || null;
+  const same = FEM_ALL.includes(v) ? FEM_V : MALE_V;
+  return [...same, ...MALE_V, ...FEM_V, ...Object.keys(I)].find(o => I[o]?.[text]) || null;
 }
 function say(text, { who = '', pitch = 1, rate = 1, vol = 1, prio = false, color = '#ffd23a', radio = false, voice = null, h = null } = {}) {
   const now = performance.now();
   if (!prio && now < speakUntil) return false;
   speakUntil = now + 900 + text.length * 60;
   const ci = CHARS.findIndex(c => c.name === who); if (!h && ci >= 0) h = CHARS[ci].h;
-  let [v, vr] = voice ? [voice, rate] : VOICE_OF[who] || [pick(MALE_V), rnd(0.92, 1.08)];
+  let [v, vr] = VOICE_OF[who] || (voice ? [voice, rate] : [pick(MALE_V), rnd(0.95, 1.05)]);
   const cv = clipVoice(text, v);
   if (cv && sfx.ready()) {
     const sub = $('sub'); sub.innerHTML = `<b style="color:${color}">${who}:</b>${text}`; sub.style.opacity = 1;
@@ -3622,6 +4703,7 @@ function say(text, { who = '', pitch = 1, rate = 1, vol = 1, prio = false, color
   } catch (e) { /* Untertitel reichen */ }
   return true;
 }
+window.__voice = { get index() { return VOICE.index; }, get bins() { return VOICE.bins; }, say, clipVoice, LINES, get CALL_LINES() { return CALL_LINES; }, get SCAN() { return SCAN; }, MALE_V, FEM_V, voiceFor };
 
 // ---------- Audio (prozedural) ----------
 const sfx = (() => {
@@ -4101,7 +5183,11 @@ bmc.addEventListener('mousedown', e => {
 });
 // Polizeifunk-Scanner (F3)
 let scannerOn = false, scanT = 6;
-const SCAN = ['Einheit {n}, Ruhestörung in {d}, bitte prüfen.', 'Zentrale an alle: Verkehrsunfall in {d}, Krankenwagen ist unterwegs.', 'Einheit {n}, verdächtige Person in {d} gemeldet.', 'Ladendiebstahl in {d}, Täter flüchtig zu Fuß.', 'Einheit {n} meldet sich ab, Mittagspause.', 'Alle Einheiten: Raser in {d}, rotes Coupé.', 'Einheit {n}, Hund ohne Leine in {d}. Ja, wirklich.', 'Streit vor einem Club in {d}, zwei Einheiten bitte.'];
+const SCAN = freshList(['Einheit {n}, Ruhestörung in {d}, bitte prüfen.', 'Zentrale an alle: Verkehrsunfall in {d}, Krankenwagen ist unterwegs.', 'Einheit {n}, verdächtige Person in {d} gemeldet.', 'Ladendiebstahl in {d}, Täter flüchtig zu Fuß.', 'Einheit {n} meldet sich ab, Mittagspause.', 'Alle Einheiten: Raser in {d}, rotes Coupé.', 'Einheit {n}, Hund ohne Leine in {d}. Ja, wirklich.', 'Streit vor einem Club in {d}, zwei Einheiten bitte.',
+  'Einheit {n}, Fahrzeug blockiert die Einfahrt in {d}.', 'Zentrale: Alarmanlage ausgelöst in {d}, vermutlich Fehlalarm.', 'Alle Einheiten: Betrunkener Fahrradfahrer in {d}.', 'Einheit {n}, Beschwerde über Lärm vom Nachbarn in {d}.', 'Zentrale an alle: Ampelausfall in {d}, bitte Verkehr regeln.', 'Einheit {n}, Tankstellenräuber in {d} gemeldet, Täter flüchtig.', 'Alle Einheiten: Vermisstes Kind in {d}, trägt rote Jacke.', 'Zentrale: Straßenkünstler ohne Genehmigung in {d}.', 'Einheit {n}, Taschendiebstahl in {d}, Verdächtiger trägt Kapuze.', 'Alle Einheiten: Wildes Parken in {d}, bitte Abschleppwagen schicken.', 'Einheit {n}, Streit zwischen Taxifahrern in {d}.', 'Zentrale an Einheit {n}: Kaffeepause genehmigt, aber nur kurz.', 'Alle Einheiten: Gestohlenes Motorrad in {d} gesichtet.', 'Zentrale, ein Mann klettert in {d} auf ein Dach. Wer ist in der Nähe?', 'Einheit {n}, Demonstration in {d}, bitte Lage beobachten.', 'Zentrale an alle: Wasserrohrbruch in {d}, Straße gesperrt.', 'Alle Einheiten: Verdächtiges Paket in {d}, bitte Abstand halten.', 'Einheit {n}, Lieferwagen steht quer in {d}.', 'Zentrale: Anwohner meldet Schüsse in {d}. Es war ein Feuerwerk.',
+  'Einheit {n}, Streife beendet, fahre zurück zur Wache.', 'Zentrale an alle: Der Donutladen an der Ecke hat wieder geöffnet.', 'Alle Einheiten: Funkdisziplin, bitte.', 'Einheit {n}, bitte melden. Einheit {n}, bitte melden!', 'Zentrale an alle: Schichtwechsel in zehn Minuten.', 'Ladendiebstahl in einem Supermarkt, Täter ist mit einer Gurke geflohen.', 'Alle Einheiten: Wer hat das Funkgerät im Wagen vier liegen lassen?', 'Zentrale: Bitte die Lautstärke am Funk reduzieren, wir hören euch.',
+  'Zentrale an alle: Ein Eiswagen steht seit einer Stunde falsch in {d}.', 'Alle Einheiten: Papageien-Entlaufmeldung in {d}, Tier ist laut und flüchtig.', 'Zentrale: Lieferdienst verfährt sich in {d}, Anwohner rufen an.', 'Alle Einheiten: Wohnmobil fährt Schlangenlinien in {d}.', 'Zentrale an alle: Filmdreh in {d}, bitte Straße nicht sperren.', 'Alle Einheiten: Jemand hat in {d} Graffiti an die Wache gesprüht.', 'Zentrale: Beschwerde über Drohnen über {d}.', 'Alle Einheiten: Schlägerei vor einer Bar in {d}, Kellner ruft an.', 'Einheit {n}, Fahrraddiebstahl in {d}, Zeuge wartet vor Ort.', 'Einheit {n}, Trunkenheit am Steuer in {d}, bitte Kontrolle.', 'Einheit {n}, Nachbarschaftsstreit in {d}, es geht um einen Zaun.', 'Einheit {n}, Einbruchsalarm in {d}, bitte prüfen und melden.']);
+const CRIME_RADIO = ['Zentrale an alle Einheiten: {c} in {d}. Verdächtiger flüchtig.', 'Achtung, alle Einheiten: {c} gemeldet, {d}. Täter ist auf der Flucht.', '{c} in {d}. Alle verfügbaren Einheiten bitte melden.', 'Zentrale: Meldung aus {d}, {c}. Streifen bitte hinfahren.'];
 function updateScanner(dt) {
   if (!scannerOn) return;
   scanT -= dt;
@@ -4109,8 +5195,8 @@ function updateScanner(dt) {
     scanT = wanted > 0 ? rnd(6, 10) : rnd(12, 22);
     const tgt = player.car || player;
     const line = wanted > 0
-      ? pick([`Verdächtiger zuletzt gesehen in ${districtOf(lastSeen.x, lastSeen.z)}.`, `Alle Einheiten nach ${districtOf(lastSeen.x, lastSeen.z)}, Verdächtiger ist bewaffnet.`, wantedCool > 2 ? `Kein Sichtkontakt mehr, wir durchsuchen ${districtOf(lastSeen.x, lastSeen.z)}.` : `Sichtkontakt in ${districtOf(tgt.x, tgt.z)}, Verfolgung läuft.`])
-      : pick(SCAN).replace('{n}', pick([4, 7, 12, 21])).replace('{d}', pick(DISTRICTS.flat()));
+      ? pick([`Verdächtiger zuletzt gesehen in ${districtOf(lastSeen.x, lastSeen.z)}.`, `Alle Einheiten nach ${districtOf(lastSeen.x, lastSeen.z)}, Verdächtiger ist bewaffnet.`, wantedCool > 2 ? `Kein Sichtkontakt mehr, wir durchsuchen ${districtOf(lastSeen.x, lastSeen.z)}.` : `Sichtkontakt in ${districtOf(tgt.x, tgt.z)}, Verfolgung läuft.`, `Zentrale, Verdächtiger zuletzt in ${districtOf(lastSeen.x, lastSeen.z)} gesehen, alle Wagen dorthin.`, `Verfolgung geht weiter, Richtung ${districtOf(tgt.x, tgt.z)}.`])
+      : pick(SCAN).replace('{n}', pick([7, 12])).replace('{d}', pick(DISTRICTS.flat()));
     say(line, { who: 'Polizeifunk', color: '#6fa8ff', pitch: 0.7, rate: 1.15, vol: 0.7, radio: true });
   }
 }
@@ -4123,11 +5209,27 @@ const EXTRA_CONTACTS = [
   { name: 'Lester-Hacker', col: '#9be3ff', look: { gender: 'm', skin: '#f2dccb', shirt: '#8a8e7a', pants: '#4a4a44', shoes: '#3a2a1c', hair: '#6a5a4a', beard: 0.5, hairStyle: 'bald', hat: '#3a3a3a' }, activity: 'Pläne besprechen' },
 ];
 const CALL_LINES = {
-  greet: ['Hey, was geht? Lust dich zu treffen?', 'Na, hast du kurz Zeit? Lass uns treffen.', 'Yo, ich bin in der Gegend. Treffen?'],
-  yes: ['Klar, komm nach {p}. Ich warte auf dich.', 'Okay, wir sehen uns in {p}.', 'Gute Idee. Treffpunkt {p}, bis gleich.'],
-  wanted: ['Bist du verrückt? Ruf mich an, wenn du die Bullen los bist!', 'Nicht mit der Polizei an den Fersen, Mann.'],
-  talk: [['Schön, dass du da bist.', 'Klar doch. Wie läuft das Geschäft?'], ['Läuft. Ich hab da so ein Ding am Laufen.', 'Erzähl mir lieber nichts davon.'], ['Wir sollten das öfter machen.', 'Auf jeden Fall. Pass auf dich auf da draußen.']],
+  greet: ['Hey, was geht? Lust dich zu treffen?', 'Na, hast du kurz Zeit? Lass uns treffen.', 'Yo, ich bin in der Gegend. Treffen?', 'Hallo, ich bin es. Hast du heute noch was vor?', 'Na du, lange nichts gehört. Treffen wir uns?', 'Hey, ich langweile mich. Komm, wir hängen ein bisschen ab.', 'Was machst du gerade? Ich hätte Zeit.', 'Ich wollte nur kurz fragen, ob du Lust auf ein Treffen hast.', 'Sag mal, hättest du Zeit für mich?', 'Hi, hier ist es nur ruhig. Wollen wir was unternehmen?', 'Hey, ich brauche eine Pause. Treffen wir uns?', 'Du, ich muss mal raus. Kommst du mit?', 'Alter, bist du da? Komm, wir treffen uns.', 'Hallo? Ich hoffe, ich störe nicht. Treffen wir uns kurz?'],
+  yes: ['Klar, ich warte auf dich: {p}.', 'Okay, wir sehen uns. Treffpunkt: {p}.', 'Gute Idee. Treffpunkt {p}, bis gleich.', 'Okay, dann los. Ich bin schon unterwegs, {p}.', 'Klar doch, bin unterwegs.', 'Gute Idee, ich komme sofort.', 'Na klar, ich warte schon.', 'Sehr gern, bis gleich!', 'Super, ich bin in zehn Minuten da.', 'Perfekt, ich hab sowieso nichts vor.', 'Machen wir. Ich bring auch was zu trinken mit.', 'Gern, ich freu mich. Bis gleich!'],
+  wanted: ['Bist du verrückt? Ruf mich an, wenn du die Bullen los bist!', 'Nicht mit der Polizei an den Fersen, Mann.', 'Hör mal, die Cops sind hinter dir. Ruf später an!', 'Ich seh es im Fernsehen. Erst Polizei abschütteln, dann reden wir.', 'Ich will nichts mit der Polizei zu tun haben. Tschüss!', 'Wie bitte? Du bist gesucht! Auflegen, sofort!', 'Nicht jetzt, du hast die Polizei im Nacken!', 'Wenn du Sirenen hörst, ruf mich bitte nicht an.', 'Ich kann gerade nicht. Bring erst deinen Ärger in Ordnung.', 'Keine Chance. Mit dir gibt es gerade nur Stress.'],
+  talk: [
+    ['Schön, dass du da bist.', 'Klar doch. Wie läuft das Geschäft?'],
+    ['Läuft. Ich hab da so ein Ding am Laufen.', 'Erzähl mir lieber nichts davon.'],
+    ['Wir sollten das öfter machen.', 'Auf jeden Fall. Pass auf dich auf da draußen.'],
+    ['Wie geht es der Familie?', 'Besser, als ich dachte. Und bei dir?'],
+    ['Hast du die Nachrichten gesehen?', 'Ich versuche, sie zu ignorieren.'],
+    ['Der Kaffee hier ist übrigens gar nicht schlecht.', 'Das sagst du, weil du ihn nicht bezahlt hast.'],
+    ['Los Santos wird jeden Tag verrückter.', 'Es war nie anders. Wir haben uns nur dran gewöhnt.'],
+    ['Ich hab neulich fast einen Strafzettel bekommen.', 'Fast? Dann bist du ja ein Profi.'],
+    ['Sag mal, ist das Wetter immer so?', 'Immer. Deshalb zieht jeder hierher.'],
+    ['Was Neues in der Szene?', 'Nichts, was ich dir erzählen darf.'],
+    ['Manchmal frage ich mich, wo das alles hinführt.', 'Hauptsache, wir sind dabei, wenn es knallt.'],
+    ['Hast du eigentlich mal Urlaub gemacht?', 'Urlaub? Ich weiß nicht mal, wie man das schreibt.'],
+    ['Ich hab neulich einen Film gesehen, der war echt schlecht.', 'In dieser Stadt gibt es nur schlechte Filme.'],
+    ['Weißt du noch, wie wir uns kennengelernt haben?', 'Wie könnte ich das vergessen? Das war ein Chaos.'],
+  ],
 };
+freshAll(CALL_LINES);
 function contacts() {
   return [...EXTRA_CONTACTS, { name: 'Downtown Cab Co.', col: '#f2c200', ride: 'taxi' }, { name: 'Chauffeur-Service', col: '#c9b27a', ride: 'chauffeur' }];
 }
@@ -4268,6 +5370,7 @@ function updateCamera(dt) {
   const vcar = player.car || (player.rideSeat && ride ? ride.car : null);
   if (vcar) {
     const c = vcar, sp = Math.abs(c.speedF || 0);
+    if (!Number.isFinite(c.x + c.y + c.z)) { c.x = Number.isFinite(c.lx) ? c.lx : 0; c.z = Number.isFinite(c.lz) ? c.lz : 0; c.y = 0; c.vx = c.vz = 0; }
     tx = c.x; ty = c.y + 1.5; tz = c.z; dist = 7.2 + sp * 0.05;
     if (performance.now() - lastMouse > 1300 && sp > 2) {
       camYaw += angDiff(camYaw, c.speedF < -2 ? c.yaw + Math.PI : c.yaw) * Math.min(1, dt * 2.5);
@@ -4296,8 +5399,19 @@ function updateCamera(dt) {
   }
   if (shake > 0) { camera.position.x += rnd(-1, 1) * shake * 0.4; camera.position.y += rnd(-1, 1) * shake * 0.4; shake = Math.max(0, shake - dt * 1.8); }
   camera.lookAt(tx, ty + 0.2, tz);
+  // NaN-Schutz: nie mit ungültiger Kameralage rendern (sonst schwarzer Bildschirm) – letzte gute Lage behalten
+  if (Number.isFinite(camera.position.x + camera.position.y + camera.position.z + camera.fov + camYaw + camPitch + camDist)) { camGood.copy(camera.position); }
+  else {
+    if (!Number.isFinite(camYaw)) camYaw = vcar && Number.isFinite(vcar.yaw) ? vcar.yaw : 0;
+    if (!Number.isFinite(camPitch)) camPitch = 0.2;
+    if (!Number.isFinite(camDist)) camDist = 6;
+    if (!Number.isFinite(camera.fov)) camera.fov = 68;
+    camera.position.copy(camGood); camera.updateProjectionMatrix();
+    if (Number.isFinite(tx + ty + tz)) camera.lookAt(tx, ty + 0.2, tz);
+  }
   skyDome.position.copy(camera.position);
 }
+const camGood = new THREE.Vector3(0, 5, 0);
 
 // ---------- Main update ----------
 let carInput = { thr: 0, skid: 0 };
@@ -4443,6 +5557,7 @@ function updateCars(dt, time) {
     if (c.driver && c.driver !== player.h) { c.driver.group.visible = d < 60; if (d < 60) animHuman(c.driver, 0, dt, false, 'drive'); }
     if (c.npcSeq) updateNpcSeq(c, dt);
     syncCar(c);
+    cgLod(c, d);
     c.group.visible = d < 600;
     if (c !== pc && !c.keep && d > 300 && !(c.cop && c.mode === 'police')) removeCar(c);
   }
