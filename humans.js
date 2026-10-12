@@ -86,7 +86,7 @@ export function setHumanShadow(h, on) { if (h.cast === on) return; h.cast = on; 
 // Zusätzliche Drehung im lokalen Knochenraum (Grad)
 function rot(b, x, y, z) { if (!b) return; _e.set(x * Math.PI / 180, y * Math.PI / 180, z * Math.PI / 180); _q.setFromEuler(_e); b.quaternion.multiply(_q); }
 const POSES = {
-  sit(h) { const B = h.B; rot(B.LeftUpLeg, -90, 0, 0); rot(B.RightUpLeg, -90, 0, 0); rot(B.LeftLeg, 90, 0, 0); rot(B.RightLeg, 90, 0, 0); h.body.position.y = -0.45; },
+  sit(h) { const B = h.B, k = h.sitK ?? 1; rot(B.LeftUpLeg, -90 * k, 0, 0); rot(B.RightUpLeg, -90 * k, 0, 0); rot(B.LeftLeg, 90 * k, 0, 0); rot(B.RightLeg, 90 * k, 0, 0); h.body.position.y = -0.45 * k; }, // sitK 0..1: weiches Hinsetzen beim Ein-/Aussteigen
   // Büro: tippen mit beiden Händen versetzt, zwischendurch zurücklehnen, umsehen, Kaffee trinken, strecken
   type(h, t) {
     POSES.sit(h); const B = h.B, ph = Math.floor((t + (h.seedT ??= Math.random() * 40)) / 7) % 6, br = Math.sin(t * 1.6) * 1.5;
@@ -99,7 +99,7 @@ const POSES = {
     rot(B2.RightHand, Math.sin(t * 23) * 10, 0, 0); rot(B2.LeftHand, Math.sin(t * 21 + 1) * 10, 0, 0);
     rot(B2.Head, 8 + Math.sin(t * 0.9) * 3, Math.sin(t * 0.35) * 10, 0);
   },
-  drive(h) { POSES.sit(h); armsForward(h, 75, 55, 55); },
+  drive(h) { POSES.sit(h); const k = h.sitK ?? 1; armsForward(h, 75 * k, 55 * k, 55 * k); },
   handsup(h) { const B = h.B; rot(B.RightArm, 0, 0, -150); rot(B.LeftArm, 0, 0, 150); rot(B.RightForeArm, -40, 0, 0); rot(B.LeftForeArm, -40, 0, 0); },
   watch(h) { POSES.sit(h); rot(h.B.Spine, -8, 0, 0); },
   lie(h) { h.body.rotation.x = -Math.PI / 2; h.body.position.set(0, 0.62, 0.95); },

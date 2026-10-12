@@ -1855,7 +1855,7 @@ function cgSetProc(c, vis) { for (const o of c.procParts) o.visible = vis; for (
 // Pro Auto und Frame: Hero-Modell nur für ruhende Autos in Kameranähe und nur bis CG_HERO_MAX gleichzeitig
 function cgLod(c, d) {
   const h = c.hero; if (!h) return;
-  const calm = c.health > 0 && c.mode !== 'wreck' && !c.ownGeo && !c.taxi && c !== player.car && !c.npcSeq && Math.hypot(c.vx, c.vz) < (h.on ? 3 : 1.5) && c.doors.every(q => q.open === 0 && q.target === 0);
+  const calm = c.health > 0 && c.mode !== 'wreck' && !c.ownGeo && !c.taxi && c !== player.car && !c.npcSeq && !(seq && seq.car === c) && Math.hypot(c.vx, c.vz) < (h.on ? 3 : 1.5) && c.doors.every(q => q.open === 0 && q.target === 0);
   const want = calm && d < (h.on ? CG_HERO_FAR : CG_HERO_NEAR) && (h.on || cgHeroOn < CG_HERO_MAX);
   if (want && !h.on) {
     if (!h.mi) { h.mi = modelInstance(h.name, c.T.L, 'z'); if (!h.mi) { c.hero = null; return; } cgTintModel(h.mi, h.name, c.color); c.body.add(h.mi); }
@@ -1905,10 +1905,11 @@ function makeCar(type, color, x, z, yaw, mode) {
   scene.add(group); cars.push(car); syncCar(car);
   return car;
 }
+let carDt = 0.016; // Schrittweite des letzten updateCars: Türen schwingen zeitbasiert (~0.45 s), nicht pro Frame
 function syncCar(c) {
   c.group.position.set(c.x, c.y, c.z); c.group.rotation.y = c.yaw;
   c.body.rotation.set(c.pitch, 0, c.roll);
-  for (const d of c.doors) { if (d.open !== d.target) { d.open += clamp(d.target - d.open, -0.05, 0.05); d.pv.rotation.y = -d.side * 1.15 * smooth(0, 1, d.open); } }
+  for (const d of c.doors) { if (d.open !== d.target) { d.open += clamp(d.target - d.open, -carDt * 2.2, carDt * 2.2); d.pv.rotation.y = -d.side * 1.15 * smooth(0, 1, d.open); } }
   for (let i = 0; i < 4; i++) { c.wheels[i].children[0].rotation.x = c.spin; if (i < 2) c.wheels[i].rotation.y = c.steer * 0.6; }
 }
 function removeCar(c) { if (c.hero?.on) cgHeroOn--; if (c.ownGeo) c.paintMesh.geometry.dispose(); if (c.driver && c.driver !== player.h) disposeHuman(c.driver); scene.remove(c.group); cars.splice(cars.indexOf(c), 1); }
@@ -1922,6 +1923,25 @@ function setDriver(c, h) {
 function takeDriver(c) {
   const h = c.driver; if (!h) return null; c.driver = null; c.body.remove(h.group); scene.add(h.group); setHumanShadow(h, true);
   const [x, z] = doorPoint(c); h.group.position.set(x, groundH(x, z), z); h.group.rotation.set(0, c.yaw + Math.PI / 2, 0); return h;
+}
+// Gehweg zur Tür (side 1 = links/Fahrer, -1 = rechts): steht jemand auf der anderen Wagenseite, geht er vorn/hinten um das Auto herum
+// Standplatz vor der Tür: hinter der Schwenkfläche der aufgehenden Tür (Scharnier vorn), sonst schlägt die Tür durch den Körper
+const doorStand = (c, side = 1, back = 0) => carLocal(c, side * (c.T.W / 2 + 0.55), c.T.L / 2 - 2.7 - back);
+function carApproach(c, px, pz, side = 1, back = 0) {
+  const W2 = c.T.W / 2 + 0.9, E = c.T.L / 2 + 0.9, [lx, lz] = toCarLocal(c, px, pz), pts = [];
+  if (lx * side < W2 - 0.4) {
+    const e = Math.abs(lz) < 0.01 ? 1 : Math.sign(lz), sd = lx * side < -0.2 ? -side : Math.abs(lx) < 0.3 ? -side : Math.sign(lx);
+    pts.push(carLocal(c, sd * W2, e * E), carLocal(c, side * W2, e * E));
+  }
+  pts.push(doorStand(c, side, back)); return pts;
+}
+// Weg Tür -> Sitz in Wagenkoordinaten (k 0 = stehend an der Tür, 1 = sitzend): über die Schwelle, Hüfte sinkt weich (h.sitK), Drehung nach vorn.
+// Der Mensch hängt dabei schon am Karosserie-Knoten, bewegt sich also starr mit dem Auto. out: Blick beim Aussteigen nach außen.
+function seatWay(c, h, seat, side, k, out) {
+  const W2 = c.T.W / 2, s = smooth(0, 1, k), D = [side * (W2 + 0.55), 0, c.T.L / 2 - 2.7], Th = [side * (W2 - 0.05), 0, seat[2] - 0.05];
+  const a = s < 0.5 ? D : Th, b = s < 0.5 ? Th : [seat[0], seat[1], seat[2]], f = s < 0.5 ? s * 2 : s * 2 - 1;
+  h.group.position.set(lerp(a[0], b[0], f), lerp(0, seat[1], s) + Math.sin(Math.PI * s) * 0.09, lerp(a[2], b[2], f));
+  h.group.rotation.set(0, lerp((out ? side : -side) * Math.PI / 2, 0, smooth(0.15, 0.9, s)), 0); h.sitK = smooth(0.25, 1, s);
 }
 const dirOfYaw = yaw => [0, 1, 2, 3].reduce((b, k) => Math.abs(angDiff(dirYaw(k), yaw)) < Math.abs(angDiff(dirYaw(b), yaw)) ? k : b, 0);
 const carCircles = c => { const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), o = c.T.L / 2 - 0.95; return [[c.x + fx * o, c.z + fz * o], [c.x, c.z], [c.x - fx * o, c.z - fz * o]]; };
@@ -2200,7 +2220,7 @@ function nextTask(p) {
 function arrive(p) {
   p.path = null; const t = p.task || {};
   if (t.enter) { p.state = 'gone'; return; }
-  if (t.car) { const c = t.car; if (c.mode === 'parked' && !c.driver && !c.npcSeq && Math.hypot(c.x - p.x, c.z - p.z) < 4) { p.state = 'entering'; p.yaw = c.yaw - Math.PI / 2; c.doors[0].target = 1; c.npcSeq = { type: 'enter', t: 0, ped: p }; return; } nextTask(p); return; }
+  if (t.car) { const c = t.car; if (c.mode === 'parked' && !c.driver && !c.npcSeq && Math.hypot(c.x - p.x, c.z - p.z) < 4) { p.state = 'entering'; c.npcSeq = { type: 'enter', t: 0, ped: p, phase: 'walk' }; return; } nextTask(p); return; }
   if (t.partner) {
     const q = t.partner;
     if (q.state === 'walk' && q.task?.partner === p) {
@@ -2282,7 +2302,7 @@ function scarePeds(x, z, r) {
 }
 let pedTalkT = 6, bumpCd = 0;
 function updatePed(p, dt, dist) {
-  if (p.state === 'entering') { animHuman(p.h, 0, dt); return; }
+  if (p.state === 'entering') { if (!p.qAnim) animHuman(p.h, 0, dt); p.qAnim = false; return; }
   if (p.state === 'fly') { updateFlying(p, dt); return; }
   if (p.state === 'free') {
     p.t -= dt; const a = Math.atan2(p.x - player.x, p.z - player.z);
@@ -3600,7 +3620,7 @@ function updateInterior(dt) {
           animHuman(n.h, 0, dt, false, n.pose);
         }
         n.h.group.position.set(n.x, 0, n.z); n.h.group.rotation.y = n.yaw;
-      }
+      } else if ((n.t = (n.t ?? 15) - dt) < 0) { if (n.at?.occ === n) n.at.occ = null; F.group.remove(n.h.group); disposeHuman(n.h); F.npcs.splice(i, 1); continue; } // Leichen verschwinden wie draußen nach ~15 s (sonst liegen sie ewig und blockieren den Platz)
       [n.wx, n.wz] = toWorld(n.x, n.z); n.wy = floorY(F.f); n.x0 = n.x; INT.npcs.push(n);
     }
     // Neue Leute kommen mit dem Aufzug bzw. durch die Tür
@@ -3775,18 +3795,42 @@ function spawnParked(minD, maxD) {
 function updateNpcSeq(c, dt) {
   const q = c.npcSeq; q.t += dt;
   if (q.type === 'exit') {
-    if (q.t > 0.5 && !q.done) { q.done = true; const h = takeDriver(c); if (h) { const [x, z] = doorPoint(c); const p = adoptPed(h, x, z, c.yaw + Math.PI / 2); nextTask(p); } }
-    if (q.t > 0.5) c.doors[0].target = 0;
-    if (q.t > 1.2) c.npcSeq = null;
+    // Tür auf (0.4 s), dann steigt der Fahrer über die Schwelle aus (0.7 s) und wird erst an der Tür zum Passanten, danach Tür zu
+    const h = c.driver;
+    if (!q.done && h && h !== player.h) {
+      if (q.t > 0.3) seatWay(c, h, seatLocal(c), 1, clamp(1 - (q.t - 0.3) / 0.7, 0, 1), true);
+      if (q.t >= 1) {
+        q.done = true; c.driver = null; c.body.remove(h.group); setHumanShadow(h, true); h.sitK = undefined;
+        const [x, z] = doorStand(c), p = adoptPed(h, x, z, c.yaw + Math.PI / 2);
+        if (q.jack) q.jack(p); else nextTask(p);
+      }
+    } else q.done = true;
+    if (q.done && !q.jack) c.doors[0].target = 0;
+    if (q.done && q.t > (q.jack ? 1 : 1.5)) c.npcSeq = null;
   } else if (q.type === 'enter') {
-    const p = q.ped;
-    if (q.t > 0.45 && !q.done) {
-      q.done = true; peds.splice(peds.indexOf(p), 1); scene.remove(p.h.group); setDriver(c, p.h); c.lazyDriver = true; c.dlook = null;
-      const dir = dirOfYaw(c.yaw); c.mode = 'ai'; initAI(c, dir);
-      const D = DIRS[dir], k = Math.round((D[0] === 0 ? c.x : c.z) / P + N / 2); c.ai.laneC = laneFor(dir, k); c.ai.speed = 2; c.ai.cruise = rnd(9, 13);
+    // Fußgänger geht zur Fahrertür (ggf. ums Auto), Tür auf, steigt ein, Tür zu, fährt los
+    const p = q.ped, h = p.h;
+    if (!peds.includes(p)) { c.npcSeq = null; c.doors[0].target = 0; return; }
+    p.qAnim = true;
+    if (q.phase === 'walk') {
+      const pts = q.pts ||= carApproach(c, p.x, p.z), [tx, tz] = pts[0], vx = tx - p.x, vz = tz - p.z, d = Math.hypot(vx, vz);
+      if (d > 0.12 && q.t < 12) {
+        const st = Math.min(d, 1.4 * dt); p.x += vx / d * st; p.z += vz / d * st; p.yaw += angDiff(p.yaw, Math.atan2(vx, vz)) * Math.min(1, dt * 8); animHuman(h, 1.4, dt);
+      } else if (pts.length > 1) pts.shift();
+      else { q.phase = 'open'; q.t = 0; c.doors[0].target = 1; }
+      return;
     }
-    if (q.t > 0.5) c.doors[0].target = 0;
-    if (q.t > 1.2) c.npcSeq = null;
+    if (q.phase === 'open') {
+      p.yaw += angDiff(p.yaw, c.yaw - Math.PI / 2) * Math.min(1, dt * 8); animHuman(h, 0, dt);
+      if (q.t > 0.5) { q.phase = 'sit'; q.t = 0; peds.splice(peds.indexOf(p), 1); scene.remove(h.group); c.body.add(h.group); setHumanShadow(h, false); c.driver = h; c.lazyDriver = true; c.dlook = null; }
+    } else if (q.phase === 'sit') {
+      const k = Math.min(1, q.t / 0.7); seatWay(c, h, seatLocal(c), 1, k, false);
+      if (k >= 1) {
+        h.sitK = undefined; q.phase = 'close'; q.t = 0; c.doors[0].target = 0;
+        const dir = dirOfYaw(c.yaw); c.mode = 'ai'; initAI(c, dir);
+        const D = DIRS[dir], kk = Math.round((D[0] === 0 ? c.x : c.z) / P + N / 2); c.ai.laneC = laneFor(dir, kk); c.ai.speed = 2; c.ai.cruise = rnd(9, 13);
+      }
+    } else if (q.t > 0.6) c.npcSeq = null;
   }
 }
 function updateAI(c, dt) {
@@ -4361,22 +4405,23 @@ function enterCar() {
   for (const c of cars) { if (c.mode === 'wreck' || c.mode === 'service' || c.ai?.hail || c.type === 'police' || c.npcSeq) continue; const [dx, dz] = doorPoint(c); const d = Math.hypot(dx - player.x, dz - player.z); if (d < bd) { bd = d; best = c; } }
   if (!best) return;
   if (best.mode === 'ai') { best.ai.speed = 0; best.mode = 'held'; }
-  seq = { type: 'enter', car: best, t: 0, phase: 'walk' };
+  seq = { type: 'enter', car: best, t: 0, phase: 'walk', pts: carApproach(best, player.x, player.z, 1, best.driver && best.driver !== player.h ? 0.9 : 0) };
 }
 // Ein-/Ausstieg abbrechen (Tod, Verhaftung): sonst bleibt seq hängen und setzt den Spieler nach dem Respawn ins alte Auto
 function abortSeq() {
   const q = seq; if (!q) return; seq = null;
   const c = q.car, h = player.h; c.doors[0].target = 0;
   if (q.type === 'enter') {
-    if (c.driver === h) { c.body.remove(h.group); scene.add(h.group); c.driver = null; }
+    if (c.driver === h) { c.driver = null; c.body.remove(h.group); scene.add(h.group); h.group.position.set(player.x, player.y, player.z); h.group.rotation.set(0, player.yaw, 0); setHumanShadow(h, true); }
+    if (c.npcSeq?.jack) c.npcSeq = null;
     if (c.mode === 'held') c.mode = 'abandoned';
   }
-  h.group.visible = true;
+  h.sitK = undefined; h.group.visible = true;
 }
 function exitCar(force = false) {
   const c = player.car; if (!c) return;
   if (force) {
-    c.body.remove(player.h.group); scene.add(player.h.group);
+    c.body.remove(player.h.group); scene.add(player.h.group); player.h.sitK = undefined;
     const [x, z] = doorPoint(c); const r = resolveCircle(x, z, 0.4); player.x = r.x; player.z = r.z; player.yaw = c.yaw;
     c.mode = c.health > 0 ? 'abandoned' : 'wreck'; c.driver = null; player.car = null; return;
   }
@@ -4384,41 +4429,47 @@ function exitCar(force = false) {
   if (Math.hypot(c.vx, c.vz) > 6) { notice('Erst langsamer fahren', 900); return; }
   seq = { type: 'exit', car: c, t: 0, phase: 'open' }; c.doors[0].target = 1; sfx.door();
 }
+// Einsteigen: zur Tür gehen (ggf. ums Auto herum), Tür schwingt auf, über die Schwelle auf den Sitz (Mensch hängt dann am Auto), Tür zu.
+// Aussteigen ist die Umkehrung. Beim Sitzweg hängt der Spieler schon an der Karosserie -> keine Lücke zwischen Auto und Figur.
 function updateSeq(dt) {
-  const q = seq, c = q.car, h = player.h; q.t += dt;
-  const [dx, dz] = doorPoint(c), [slx, sly, slz] = seatLocal(c);
-  const seatW = () => { const [x, z] = carLocal(c, slx, slz); return [x, c.y + sly, z]; };
+  const q = seq, c = q.car, h = player.h, d0 = c.doors[0]; q.t += dt;
+  const seat = seatLocal(c), toDir = (tx, tz, sp) => {
+    const vx = tx - player.x, vz = tz - player.z, d = Math.hypot(vx, vz);
+    if (d > 0.12) { const st = Math.min(d, sp * dt); player.x += vx / d * st; player.z += vz / d * st; player.yaw += angDiff(player.yaw, Math.atan2(vx, vz)) * Math.min(1, dt * 10); animHuman(h, sp, dt); }
+    player.y = groundH(player.x, player.z); return d <= 0.12;
+  };
+  const follow = () => { const g = h.group.position, [x, z] = carLocal(c, g.x, g.z); player.x = x; player.z = z; player.y = c.y + g.y; player.yaw = c.yaw + h.group.rotation.y; };
   if (q.type === 'enter') {
     if (q.phase === 'walk') {
-      const vx = dx - player.x, vz = dz - player.z, d = Math.hypot(vx, vz);
-      if (d > 0.15 && q.t < 3) { const st = Math.min(d, 3.2 * dt); player.x += vx / d * st; player.z += vz / d * st; player.yaw += angDiff(player.yaw, Math.atan2(vx, vz)) * Math.min(1, dt * 10); animHuman(h, 3.2, dt); }
-      else { q.phase = 'open'; q.t = 0; c.doors[0].target = 1; sfx.door(); }
+      if (toDir(q.pts[0][0], q.pts[0][1], 3.2) || q.t > 8) {
+        if (q.pts.length > 1 && q.t <= 8) q.pts.shift();
+        else { q.phase = 'open'; q.t = 0; d0.target = 1; sfx.door(); if (c.driver && c.driver !== h) c.npcSeq = { type: 'exit', t: 0, jack: p => { p.state = 'free'; p.t = 6; scarePeds(c.x, c.z, 20); say(pick(LINES.carjack), { who: 'Fahrer', voice: p.voice, rate: p.vrate, h: p.h, prio: true }); reportCrime('carjack', c.x, c.z, 1); } }; }
+      }
     } else if (q.phase === 'open') {
       player.yaw += angDiff(player.yaw, c.yaw - Math.PI / 2) * Math.min(1, dt * 8); animHuman(h, 0, dt);
-      if (q.t > 0.45) {
-        if (c.driver && c.driver !== h) {
-          const victim = takeDriver(c), p = adoptPed(victim, dx + Math.sin(c.yaw) * 1.2, dz + Math.cos(c.yaw) * 1.2, c.yaw);
-          p.state = 'free'; p.t = 6; scarePeds(c.x, c.z, 20); say(pick(LINES.carjack), { who: 'Fahrer', voice: p.voice, rate: p.vrate, h: p.h, prio: true });
-          reportCrime('carjack', c.x, c.z, 1);
-        }
-        q.phase = 'sit'; q.t = 0; q.from = [player.x, player.y, player.z];
+      if ((!c.npcSeq && d0.open >= 0.8) || q.t > 5) { q.phase = 'align'; q.t = 0; }
+    } else if (q.phase === 'align') {
+      const [sx, sz] = doorStand(c);
+      if (toDir(sx, sz, 1.8) || q.t > 3) {
+        player.yaw += angDiff(player.yaw, c.yaw - Math.PI / 2) * Math.min(1, dt * 8); animHuman(h, 0, dt);
+        if (Math.abs(angDiff(player.yaw, c.yaw - Math.PI / 2)) < 0.12 || q.t > 3) { q.phase = 'sit'; q.t = 0; scene.remove(h.group); c.body.add(h.group); setHumanShadow(h, false); c.driver = h; }
       }
     } else if (q.phase === 'sit') {
-      const k = Math.min(1, q.t / 0.6), [sx, sy, sz] = seatW();
-      player.x = lerp(q.from[0], sx, k); player.z = lerp(q.from[2], sz, k); player.y = lerp(q.from[1], sy, k);
-      player.yaw += angDiff(player.yaw, c.yaw) * Math.min(1, dt * 6); animHuman(h, 0, dt, false, k > 0.5 ? 'sit' : null);
-      if (k >= 1) { setDriver(c, h); q.phase = 'close'; q.t = 0; c.doors[0].target = 0; }
-    } else if (q.t > 0.4) { player.car = c; c.mode = 'player'; c.vx = c.vz = 0; c.speedF = 0; seq = null; sfx.door(); }
-    if (q.phase !== 'close') { h.group.position.set(player.x, player.y, player.z); h.group.rotation.set(0, player.yaw, 0); }
-    else animHuman(h, 0, dt, false, 'drive');
+      const k = Math.min(1, q.t / 0.8); seatWay(c, h, seat, 1, k, false); follow(); animHuman(h, 0, dt, false, 'drive');
+      if (k >= 1) { h.sitK = undefined; q.phase = 'close'; q.t = 0; d0.target = 0; }
+    } else { animHuman(h, 0, dt, false, 'drive'); if (q.t > 0.5) { player.car = c; c.mode = 'player'; c.vx = c.vz = 0; c.speedF = 0; seq = null; sfx.door(); } }
+    if (q.phase === 'walk' || q.phase === 'open' || q.phase === 'align') { h.group.position.set(player.x, player.y, player.z); h.group.rotation.set(0, player.yaw, 0); }
+  } else if (q.phase === 'open') {
+    animHuman(h, 0, dt, false, 'drive'); follow();
+    if (d0.open >= 0.7 || q.t > 1) { q.phase = 'out'; q.t = 0; }
   } else {
-    if (q.phase === 'open') { animHuman(h, 0, dt, false, 'drive'); if (q.t > 0.45) { q.phase = 'out'; q.t = 0; c.body.remove(h.group); scene.add(h.group); c.driver = null; const [sx, sy, sz] = seatW(); q.from = [sx, sy, sz]; player.yaw = c.yaw - Math.PI / 2; } }
-    else if (q.phase === 'out') {
-      const k = Math.min(1, q.t / 0.6), r = resolveCircle(dx, dz, 0.4);
-      player.x = lerp(q.from[0], r.x, k); player.z = lerp(q.from[2], r.z, k); player.y = lerp(q.from[1], groundH(r.x, r.z), k);
-      animHuman(h, 0, dt, false, k < 0.5 ? 'sit' : null); h.group.position.set(player.x, player.y, player.z); h.group.rotation.set(0, player.yaw, 0);
-      if (k >= 1) { q.phase = 'close'; q.t = 0; c.doors[0].target = 0; player.car = null; c.mode = c.health > 0 ? 'abandoned' : 'wreck'; }
-    } else { animHuman(h, 0, dt); if (q.t > 0.4) { seq = null; sfx.door(); } }
+    const k = 1 - Math.min(1, q.t / 0.8); seatWay(c, h, seat, 1, k, true); follow(); animHuman(h, 0, dt, false, 'drive');
+    if (k <= 0) {
+      const [sx, sz] = doorStand(c), r = resolveCircle(sx, sz, 0.4);
+      c.body.remove(h.group); scene.add(h.group); setHumanShadow(h, true); h.sitK = undefined; c.driver = null;
+      player.x = r.x; player.z = r.z; player.y = groundH(r.x, r.z); player.yaw = c.yaw + Math.PI / 2; h.group.position.set(player.x, player.y, player.z); h.group.rotation.set(0, player.yaw, 0);
+      d0.target = 0; player.car = null; c.mode = c.health > 0 ? 'abandoned' : 'wreck'; seq = null; sfx.door();
+    }
   }
 }
 
@@ -4649,39 +4700,37 @@ function chauffeurBack(c) {
     once(() => { setDriver(c, ride.ch); ride.ch = null; }), wait(0.3), once(() => { c.doors[0].target = 0; sfx.door(); }), wait(0.4),
   ];
 }
-function playerWalkTo(pt) {
-  let t = 0;
+function playerWalkVia(c, side) {
+  let t = 0, pts = null;
   return dt => {
-    t += dt; const [tx, tz] = pt(), vx = tx - player.x, vz = tz - player.z, d = Math.hypot(vx, vz);
-    if (d < 0.15 || t > 4) return true;
-    const st = Math.min(d, 3 * dt); player.x += vx / d * st; player.z += vz / d * st;
+    t += dt; pts ||= carApproach(c, player.x, player.z, side);
+    const [tx, tz] = pts[0], vx = tx - player.x, vz = tz - player.z, d = Math.hypot(vx, vz);
+    if (d < 0.12 || t > 8) { if (pts.length > 1 && t <= 8) { pts.shift(); return false; } return true; }
+    const st = Math.min(d, 3 * dt); player.x += vx / d * st; player.z += vz / d * st; player.y = groundH(player.x, player.z);
     player.yaw += angDiff(player.yaw, Math.atan2(vx, vz)) * Math.min(1, dt * 10); animHuman(player.h, 3, dt); syncPH(); return false;
   };
 }
+// Beifahrersitz: Mensch hängt beim Einsteigen schon am Karosserie-Knoten (starr mit dem Auto), Weg Tür -> Sitz wie beim Fahrer
 function playerSit(c) {
-  let t = 0, from = null;
+  let t = 0, on = false;
   return dt => {
-    from ||= [player.x, player.y, player.z]; t += dt;
-    const k = Math.min(1, t / 0.6), [lx, ly, lz] = paxLocal(c), [sx, sz] = carLocal(c, lx, lz);
-    player.x = lerp(from[0], sx, k); player.z = lerp(from[2], sz, k); player.y = lerp(from[1], c.y + ly, k);
-    player.yaw += angDiff(player.yaw, c.yaw) * Math.min(1, dt * 6); animHuman(player.h, 0, dt, false, k > 0.5 ? 'sit' : null); syncPH();
+    const h = player.h; if (!on) { on = true; scene.remove(h.group); c.body.add(h.group); setHumanShadow(h, false); }
+    t += dt; const k = Math.min(1, t / 0.8), g = h.group.position; seatWay(c, h, paxLocal(c), -1, k, false);
+    const [x, z] = carLocal(c, g.x, g.z); player.x = x; player.z = z; player.y = c.y + g.y; player.yaw = c.yaw + h.group.rotation.y; animHuman(h, 0, dt, false, 'sit');
     if (k < 1) return false;
-    c.body.add(player.h.group); player.h.group.position.set(lx, ly, lz); player.h.group.rotation.set(0, 0, 0); setHumanShadow(player.h, false); player.rideSeat = true; return true;
+    h.sitK = undefined; player.rideSeat = true; return true;
   };
 }
 function playerOut(c) {
-  let t = 0, from = null;
+  let t = 0, on = false;
   return dt => {
-    if (!from) {
-      const [lx, ly, lz] = paxLocal(c), [sx, sz] = carLocal(c, lx, lz);
-      c.body.remove(player.h.group); scene.add(player.h.group); setHumanShadow(player.h, true); player.rideSeat = false;
-      from = [sx, c.y + ly, sz]; player.yaw = c.yaw - Math.PI / 2;
-    }
-    t += dt; const k = Math.min(1, t / 0.6), [dx, dz] = doorPoint(c, -1), q = resolveCircle(dx, dz, 0.4);
-    player.x = lerp(from[0], q.x, k); player.z = lerp(from[2], q.z, k); player.y = lerp(from[1], groundH(q.x, q.z), k);
-    animHuman(player.h, 0, dt, false, k < 0.5 ? 'sit' : null); syncPH();
-    if (k < 1) return false;
-    player.ride = false; return true;
+    const h = player.h; if (!on) { on = true; player.rideSeat = false; }
+    t += dt; const k = 1 - Math.min(1, t / 0.8), g = h.group.position; seatWay(c, h, paxLocal(c), -1, k, true);
+    const [x, z] = carLocal(c, g.x, g.z); player.x = x; player.z = z; player.y = c.y + g.y; player.yaw = c.yaw + h.group.rotation.y; animHuman(h, 0, dt, false, 'sit');
+    if (k > 0) return false;
+    const [sx, sz] = doorStand(c, -1), q = resolveCircle(sx, sz, 0.4);
+    c.body.remove(h.group); scene.add(h.group); setHumanShadow(h, true); h.sitK = undefined;
+    player.x = q.x; player.z = q.z; player.y = groundH(q.x, q.z); player.yaw = c.yaw - Math.PI / 2; syncPH(); player.ride = false; return true;
   };
 }
 function requestRide(kind, payM = 'card') {
@@ -4711,7 +4760,7 @@ function cancelRide() {
 }
 function boardRide() {
   const c = ride.car; player.ride = true; player.rideSeat = false; ride.state = 'boarding';
-  ride.steps = [playerWalkTo(() => doorPoint(c, -1)), dt => { player.yaw += angDiff(player.yaw, c.yaw + Math.PI / 2) * Math.min(1, dt * 8); animHuman(player.h, 0, dt); syncPH(); return Math.abs(angDiff(player.yaw, c.yaw + Math.PI / 2)) < 0.2; }];
+  ride.steps = [playerWalkVia(c, -1), dt => { player.yaw += angDiff(player.yaw, c.yaw + Math.PI / 2) * Math.min(1, dt * 8); animHuman(player.h, 0, dt); syncPH(); return Math.abs(angDiff(player.yaw, c.yaw + Math.PI / 2)) < 0.2; }];
   if (ride.kind === 'taxi') ride.steps.push(once(() => { c.doors[1].target = 1; sfx.door(); }), wait(0.45));
   ride.steps.push(playerSit(c));
   if (ride.kind === 'chauffeur') ride.steps.push(...chauffeurBack(c));
@@ -4754,7 +4803,7 @@ function alightRide() {
 function updateRide(dt) {
   if (!ride) return;
   const c = ride.car; ride.t += dt;
-  if (!cars.includes(c) || c.mode === 'wreck') { if (player.rideSeat) { c.body.remove(player.h.group); scene.add(player.h.group); setHumanShadow(player.h, true); } player.ride = player.rideSeat = false; if (ride.ch) { scene.remove(ride.ch.group); disposeHuman(ride.ch); } ride = null; return; }
+  if (!cars.includes(c) || c.mode === 'wreck') { if (player.rideSeat || player.h.group.parent === c.body) { player.h.sitK = undefined; c.body.remove(player.h.group); scene.add(player.h.group); setHumanShadow(player.h, true); player.h.group.position.set(player.x, player.y, player.z); player.h.group.rotation.set(0, player.yaw, 0); } player.ride = player.rideSeat = false; if (ride.ch) { scene.remove(ride.ch.group); disposeHuman(ride.ch); } ride = null; return; }
   if (player.dead && (player.ride || ride.state !== 'leaving')) {
     if (player.h.group.parent === c.body) { c.body.remove(player.h.group); scene.add(player.h.group); setHumanShadow(player.h, true); player.h.group.position.set(player.x, player.y, player.z); }
     player.ride = player.rideSeat = false; if (ride.ch) { setDriver(c, ride.ch); ride.ch = null; }
@@ -5839,13 +5888,16 @@ function updatePlayer(dt, raw) {
 }
 
 function updateCars(dt, time) {
-  const pc = player.car;
+  const pc = player.car; carDt = dt || carDt;
   updateSignals(dt); updateKnock(dt); updateHail(dt);
   for (const c of [...cars]) {
     if (c.mode === 'ai') updateAI(c, dt);
     else if (c.mode === 'police') updatePolice(c, dt);
     else if (c.mode === 'crashed') updateCrashed(c, dt);
-    else if (c.mode === 'abandoned' || c.mode === 'wreck') { if (Math.hypot(c.vx, c.vz) > 0.05) driveCar(c, 0, 0, true, dt); else c.vx = c.vz = 0; }
+    else if (c.mode === 'abandoned' || c.mode === 'wreck' || c.mode === 'parked' || c.mode === 'held' || (c === pc && seq?.car === c)) {
+      // auch im Stand ausfedern + auf die Fahrbahnhöhe sinken (sonst bleibt ein verlassenes Auto schief / schwebend stehen)
+      if (Math.hypot(c.vx, c.vz) > 0.05 || Math.abs(c.pitch) + Math.abs(c.roll) + Math.abs(c.pv || 0) + Math.abs(c.rv || 0) > 0.003 || Math.abs(c.y - groundH(c.x, c.z)) > 0.002) driveCar(c, 0, 0, true, dt); else c.vx = c.vz = 0;
+    }
     if (c === pc || c.mode === 'police') {
       for (const o of cars) {
         if (o === c || Math.abs(o.x - c.x) > 7 || Math.abs(o.z - c.z) > 7) continue;
@@ -6107,7 +6159,7 @@ async function boot() {
   for (let i = 0; i < 18; i++) spawnParked(15, 230);
   for (let i = 0; i < 50; i++) spawnPed(6, 130);
   worldReady = true;
-  window.__game = { camStep(dt) { updateCamera(dt); }, dbgSolids(x, z, r) { const o = [], seen = new Set(); for (let cx = Math.floor((x - r) / CELL); cx <= Math.floor((x + r) / CELL); cx++) for (let cz = Math.floor((z - r) / CELL); cz <= Math.floor((z + r) / CELL); cz++) for (const s of solids.get(ckey(cx, cz)) || []) if (!seen.has(s) && s.maxx > x - r && s.minx < x + r && s.maxz > z - r && s.minz < z + r) { seen.add(s); o.push([s.minx, s.maxx, s.minz, s.maxz, s.h, s.y0]); } return o; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, knockPlayer, jailReset, get navRoute() { return navRoute; }, holdItem, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get hail() { return hail; }, get uiMenu() { return uiMenu; }, get pendingCall() { return pendingCall; }, respawn, carStep, groundH, doorPoint, seatLocal, carLocal, get seq() { return seq; }, enterCar, exitCar, inCab, get phone() { return phone; } };
+  window.__game = { camStep(dt) { updateCamera(dt); }, dbgSolids(x, z, r) { const o = [], seen = new Set(); for (let cx = Math.floor((x - r) / CELL); cx <= Math.floor((x + r) / CELL); cx++) for (let cz = Math.floor((z - r) / CELL); cz <= Math.floor((z + r) / CELL); cz++) for (const s of solids.get(ckey(cx, cz)) || []) if (!seen.has(s) && s.maxx > x - r && s.minx < x + r && s.maxz > z - r && s.minz < z + r) { seen.add(s); o.push([s.minx, s.maxx, s.minz, s.maxz, s.h, s.y0]); } return o; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, knockPlayer, jailReset, get navRoute() { return navRoute; }, holdItem, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get hail() { return hail; }, get uiMenu() { return uiMenu; }, get pendingCall() { return pendingCall; }, respawn, carStep, makeCar, groundH, doorPoint, seatLocal, carLocal, get seq() { return seq; }, enterCar, exitCar, inCab, get phone() { return phone; } };
   progress(0.9, CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase() + ' wird geweckt …'); await nextFrame();
   progress(0.95, 'Shader werden kompiliert …'); await nextFrame();
   updateCamera(0.016);

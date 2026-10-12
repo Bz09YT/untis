@@ -43,6 +43,7 @@ function prepModel(name, root) {
   // Streu-Objekte aus den Khronos-Szenen (Bodenplatte, Glühbirne, Glühwürmchen) entfernen, bevor die Maße berechnet werden
   const stray = []; root.traverse(o => { if (o !== root && /^(GroundPlane|Plane|Bulb|BulbMesh|firefly\d*|pointlight_|chase_)/i.test(o.name || '')) stray.push(o); });
   for (const o of stray) o.removeFromParent();
+  root.position.set(0, 0, 0); // eigene Wurzel-Verschiebung (z. B. CarConcept: y=-1.6) würde sonst im Offset fehlen -> Auto schwebt
   root.updateMatrixWorld(true);
   const bb = new THREE.Box3().setFromObject(root), c = bb.getCenter(new THREE.Vector3());
   root.userData.size = bb.getSize(new THREE.Vector3());
