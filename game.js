@@ -3547,11 +3547,12 @@ function updateAI(c, dt) {
     const dx = p.x - c.x, dz = p.z - c.z, ahead = dx * fx + dz * fz;
     if (ahead > 0 && ahead < 16 && Math.abs(dx * rx + dz * rz) < 3.2) target = Math.min(target, Math.max(0, (ahead - 5) * 1.2));
   }
-  const pBlock = pa > 0 && pa < (player.car ? 9 : 12) && Math.abs(pdx * rx + pdz * rz) < 1.8;
+  const pBlock = !a.hail && pa > 0 && pa < (player.car ? 9 : 12) && Math.abs(pdx * rx + pdz * rz) < 1.8;
   if (!player.car && pBlock) target = 0;
   a.honkWait = pBlock && a.speed < 1 ? (a.honkWait || 0) + dt : 0;
   if (a.honkWait > 1.5 && a.honk === undefined) { a.honk = 0; a.honkWait = -6; }
-  a.speed = lerp(a.speed, target, Math.min(1, dt * (target < a.speed ? 4 : 1.2)));
+  if (a.hail) { target = Math.min(target, a.hail.v); a.speed = target < a.speed ? Math.max(target, a.speed - 5 * dt) : lerp(a.speed, target, Math.min(1, dt * 1.2)); } // Taxi hält sanft (max 5 m/s²)
+  else a.speed = lerp(a.speed, target, Math.min(1, dt * (target < a.speed ? 4 : 1.2)));
   a.stuck = a.speed < 0.5 ? a.stuck + dt : 0;
   if (a.stuck > 12) { a.stuck = 0; }
   const D = DIRS[a.dir];
@@ -3569,7 +3570,7 @@ function updateAI(c, dt) {
     if (a.park) {
       a.cruise = 3.5; const lat = D[0] === 0 ? c.x : c.z;
       if (Math.abs(lat - a.laneC) < 0.25) { a.cruise = 0; if (a.speed < 0.3) { c.mode = 'parked'; c.yaw = dirYaw(a.dir); a.park = false; c.doors[0].target = 1; c.npcSeq = { type: 'exit', t: 0 }; c.lazyDriver = false; } }
-    } else if (c.driver && Math.random() < dt * 0.006 && Math.hypot(c.x - player.x, c.z - player.z) < 120) {
+    } else if (c.driver && !a.hail && Math.random() < dt * 0.006 && Math.hypot(c.x - player.x, c.z - player.z) < 120) {
       const kc0 = roadPos(a.nextK), al = D[0] === 0 ? c.z : c.x, dist0 = (kc0 - al) * (D[0] + D[1]);
       if (dist0 > 22 && dist0 < 55) {
         const r0 = rightOf(a.dir), k = Math.round((D[0] === 0 ? c.x : c.z) / P + N / 2), curb = roadPos(k) + (D[0] === 0 ? r0[0] : r0[1]) * PARK;
@@ -3592,7 +3593,7 @@ function updateAI(c, dt) {
       if (valid(a.dir)) opts.push(a.dir, a.dir, a.dir);
       const rd = (a.dir + 1) % 4, ld = (a.dir + 3) % 4;
       if (valid(rd)) opts.push(rd, rd); if (valid(ld)) opts.push(ld);
-      const nd = opts.length ? pick(opts) : (a.dir + 2) % 4;
+      const nd = a.hail && valid(a.dir) ? a.dir : opts.length ? pick(opts) : (a.dir + 2) % 4;
       if (nd !== a.dir) {
         const ix = roadPos(kx), iz = roadPos(kz), ND = DIRS[nd];
         const exitLat = laneFor(nd, ND[0] === 0 ? kx : kz);
@@ -3607,6 +3608,52 @@ function updateAI(c, dt) {
   // Stöße durch den Spieler abklingen lassen
   c.x += a.knockX * dt; c.z += a.knockZ * dt; a.knockX *= Math.exp(-3 * dt); a.knockZ *= Math.exp(-3 * dt);
   c.spin += a.speed * dt / 0.36; c.y = 0;
+}
+
+// Taxi heranwinken: wer auf ein fahrendes Taxi zugeht, dem hält es sanft am Bordstein und bietet die Fahrt an (läuft dann über den normalen LS-Ride-Ablauf)
+let hail = null;
+function hailRelease(msg) {
+  const c = hail.c, a = c.ai; hail = null; a.hail = null; c.hailCd = 25;
+  if (c.mode === 'service' && ride?.car === c && ride.hailed && ride.state === 'waiting') {
+    ride = null; c.keep = false; c.mode = 'ai'; c.lazyDriver = true; initAI(c, dirOfYaw(c.yaw));
+    const D = DIRS[a.dir], k = Math.round((D[0] === 0 ? c.x : c.z) / P + N / 2); a.laneC = laneFor(a.dir, clamp(k, 0, N)); a.speed = 0.5; a.cruise = rnd(9, 13);
+  }
+  if (msg) notice(msg, 1800);
+}
+function updateHail(dt) {
+  for (const c of cars) if (c.hailCd > 0) c.hailCd -= dt;
+  const off = player.dead || player.car || player.ride || player.jail || INT.inside || switching || wanted > 0;
+  if (hail) {
+    const c = hail.c, a = c.ai;
+    if (ride?.car === c && ride.hailed && ride.state !== 'waiting') { hail = null; return; } // Fahrt läuft -> normaler Ride-Ablauf
+    if (!cars.includes(c) || c.mode === 'wreck') { hail = null; return; }
+    hail.t += dt;
+    if (c.mode === 'ai') {
+      const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), d = (player.x - c.x) * fx + (player.z - c.z) * fz - 0.45, D = DIRS[a.dir], r = rightOf(a.dir);
+      if (off || ride || a.turn || hail.t > 25 || Math.hypot(c.x - player.x, c.z - player.z) > 45) { hailRelease(); return; }
+      const k = Math.round((D[0] === 0 ? c.x : c.z) / P + N / 2); a.laneC = roadPos(clamp(k, 0, N)) + (D[0] === 0 ? r[0] : r[1]) * PARK; // an den Bordstein
+      a.hail.v = d > 0.3 ? Math.min(a.cruise, Math.sqrt(2 * 3 * d)) : 0;
+      if (a.speed < 0.3 && d < 3.5 && Math.abs((D[0] === 0 ? c.x : c.z) - a.laneC) < 1.2) {
+        a.hail = null; a.speed = 0; c.mode = 'service'; c.keep = true; c.lazyDriver = false; c.vx = c.vz = 0; hail.w = 0;
+        ride = { kind: 'taxi', car: c, drv: c.driver, ch: null, state: 'waiting', pay: phone.pay || 'card', fare: 0, odo: 0, curb: { x: c.x, z: c.z, yaw: c.yaw }, steps: [], t: 0, uiT: 0, hailed: true };
+        sfx.horn(c.x, c.z, 0.5); sfx.ding(); notice('Taxi hält an – F: Taxi nehmen', 2600);
+      }
+    } else {
+      const [dx, dz] = doorPoint(c, -1);
+      if (off || ride?.car !== c || (hail.w += dt) > 15 || Math.hypot(dx - player.x, dz - player.z) > 12) hailRelease('Das Taxi fährt weiter');
+    }
+    return;
+  }
+  if (off || ride) return;
+  const pfx = Math.sin(player.yaw), pfz = Math.cos(player.yaw);
+  for (const c of cars) {
+    if (!c.taxi || c.mode !== 'ai' || !c.driver || c.hailCd > 0 || c.ai.turn || c.ai.park || c.ai.speed < 3) continue;
+    const a = c.ai, fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), dx = player.x - c.x, dz = player.z - c.z, pa = dx * fx + dz * fz, dist = Math.hypot(dx, dz);
+    if (dist > 36 || pa < a.speed * a.speed / 9 + 1.5 || Math.abs(dx * -fz + dz * fx) > 16 || (pfx * -dx + pfz * -dz) / dist < 0.7) continue; // vorn, nahe, Spieler schaut zum Taxi
+    const D = DIRS[a.dir], q = (roadPos(a.nextK) - (D[0] === 0 ? c.z : c.x)) * (D[0] + D[1]) - pa; // Abstand Spieler -> nächste Kreuzung
+    if (q < R / 2 + 3 || q > P - R / 2 - 3) continue; // nur mitten im Block anhalten
+    hail = { c, t: 0, w: 0 }; a.hail = { v: a.speed }; return;
+  }
 }
 
 // ---------- Police ----------
@@ -4033,7 +4080,7 @@ let seq = null;
 function enterCar() {
   if (seq || INT.inside || player.rag || player.dead) return;
   let best = null, bd = 4.5;
-  for (const c of cars) { if (c.mode === 'wreck' || c.mode === 'service' || c.type === 'police' || c.npcSeq) continue; const [dx, dz] = doorPoint(c); const d = Math.hypot(dx - player.x, dz - player.z); if (d < bd) { bd = d; best = c; } }
+  for (const c of cars) { if (c.mode === 'wreck' || c.mode === 'service' || c.ai?.hail || c.type === 'police' || c.npcSeq) continue; const [dx, dz] = doorPoint(c); const d = Math.hypot(dx - player.x, dz - player.z); if (d < bd) { bd = d; best = c; } }
   if (!best) return;
   if (best.mode === 'ai') { best.ai.speed = 0; best.mode = 'held'; }
   seq = { type: 'enter', car: best, t: 0, phase: 'walk' };
@@ -4942,8 +4989,8 @@ function updateHUD() {
     else if (nearestDoor(player.x, player.z, 2.2)) { const b = nearestDoor(player.x, player.z, 2.2); hint = `${floorName(b, 0)} · einfach hineingehen`; }
     else if (nearATM()) hint = 'Drücke <b>E</b> für den Geldautomaten';
     else if (nearVend()) hint = 'Drücke <b>E</b> für den Getränkeautomaten ($1)';
-    else if (ride && ride.state === 'waiting' && Math.hypot(...doorPoint(ride.car, -1).map((v, i) => v - (i ? player.z : player.x))) < 6) hint = `Drücke <b>F</b>, um in ${ride.kind === 'taxi' ? 'das Taxi' : 'die Limousine'} einzusteigen`;
-    else for (const c of cars) if (c.mode !== 'wreck' && c.type !== 'police' && c.mode !== 'service' && Math.hypot(c.x - player.x, c.z - player.z) < 4.2) { hint = 'Drücke <b>F</b>, um einzusteigen'; break; }
+    else if (ride && ride.state === 'waiting' && Math.hypot(...doorPoint(ride.car, -1).map((v, i) => v - (i ? player.z : player.x))) < 6) hint = ride.hailed ? 'Drücke <b>F</b> – Taxi nehmen' : `Drücke <b>F</b>, um in ${ride.kind === 'taxi' ? 'das Taxi' : 'die Limousine'} einzusteigen`;
+    else for (const c of cars) if (c.mode !== 'wreck' && c.type !== 'police' && c.mode !== 'service' && !c.ai?.hail && Math.hypot(c.x - player.x, c.z - player.z) < 4.2) { hint = 'Drücke <b>F</b>, um einzusteigen'; break; }
   }
   $('hint').innerHTML = hint; $('hint').style.display = hint ? 'block' : 'none';
   $('cross').style.display = !player.car && player.aimT > 0 ? 'block' : 'none';
@@ -5514,7 +5561,7 @@ function updatePlayer(dt, raw) {
 
 function updateCars(dt, time) {
   const pc = player.car;
-  updateSignals(dt); updateKnock(dt);
+  updateSignals(dt); updateKnock(dt); updateHail(dt);
   for (const c of [...cars]) {
     if (c.mode === 'ai') updateAI(c, dt);
     else if (c.mode === 'police') updatePolice(c, dt);
@@ -5764,7 +5811,7 @@ async function boot() {
   for (let i = 0; i < 18; i++) spawnParked(15, 230);
   for (let i = 0; i < 50; i++) spawnPed(6, 130);
   worldReady = true;
-  window.__game = { deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, knockPlayer, jailReset, get navRoute() { return navRoute; }, holdItem, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get uiMenu() { return uiMenu; }, get pendingCall() { return pendingCall; }, respawn, carStep, inCab, get phone() { return phone; } };
+  window.__game = { deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, knockPlayer, jailReset, get navRoute() { return navRoute; }, holdItem, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get hail() { return hail; }, get uiMenu() { return uiMenu; }, get pendingCall() { return pendingCall; }, respawn, carStep, inCab, get phone() { return phone; } };
   progress(0.9, CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase() + ' wird geweckt …'); await nextFrame();
   progress(0.95, 'Shader werden kompiliert …'); await nextFrame();
   updateCamera(0.016);
