@@ -35,13 +35,19 @@ export class Batch {
   build(parent, mats, shadow = false) {
     const out = [];
     for (const [k, list] of this.m) {
-      const g = mergeGeometries(list.map(x => { x = x.index ? x : x; return x; })); if (!g) continue;
+      const g = mergeGeometries(list.map(x => x.index ? x.toNonIndexed() : x)); if (!g) continue;
       const mesh = new THREE.Mesh(g, mats[k]); mesh.castShadow = shadow; mesh.receiveShadow = true; mesh.matrixAutoUpdate = false; parent.add(mesh); out.push(mesh);
     }
     return out;
   }
 }
 
+
+function flipWinding(g) { // dreht die Dreiecksreihenfolge (für gespiegelte Extrusionen); funktioniert für nicht indizierte Geometrie
+  if (g.index) { const ix = g.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; } }
+  else for (const k in g.attributes) { const a = g.attributes[k], n = a.itemSize, arr = a.array; for (let i = 0; i < a.count; i += 3) for (let c = 0; c < n; c++) { const t = arr[(i + 1) * n + c]; arr[(i + 1) * n + c] = arr[(i + 2) * n + c]; arr[(i + 2) * n + c] = t; } }
+  g.computeVertexNormals(); return g;
+}
 // ---------- Rumpf: gitterförmig, mit optionalem Türausschnitt (Backbord) ----------
 // Station-Radien: Nase bei z = -L/2, Heck bei z = +L/2
 export function fuselageGeo(L, R, cut) {
@@ -82,14 +88,14 @@ export function liveryTex(opt) {
     c.fillStyle = '#c9ced4'; c.fillRect(0, h * 0.62, w, h * 0.38); // Unterseite (Backbord/Steuerbord je 0.5 von oben gezählt)
     // Winkel theta: v=0 oben, 0.25 Steuerbord, 0.75 Backbord
     for (const side of [0.25, 0.75]) {
-      const vc = side * h, flip = side < 0.5;
+      const vc = side * h; c.save();
+      if (side > 0.5) { c.translate(w / 2, vc); c.rotate(Math.PI); c.translate(-w / 2, -vc); }
       c.fillStyle = opt.stripe || '#1a56c4'; c.fillRect(0.06 * w, vc + h * 0.07, 0.82 * w, h * 0.012);
       c.fillStyle = opt.stripe2 || '#e0302a'; c.fillRect(0.06 * w, vc + h * 0.085, 0.82 * w, h * 0.006);
-      // Fenster
       c.fillStyle = '#16212e';
       for (let x = 0.095 * w; x < 0.75 * w; x += 0.0098 * w) c.fillRect(x, vc - h * 0.012, 0.0045 * w, h * 0.036);
-      c.save(); c.translate(0.24 * w, vc - h * 0.065); if (flip) { c.translate(0.34 * w, 0); c.scale(-1, 1); }
-      c.fillStyle = opt.text || '#12315e'; c.font = `bold ${h * 0.085}px Arial Black, Arial, sans-serif`; c.textBaseline = 'middle'; c.fillText(opt.name || 'LS AIR', 0, 0); c.restore();
+      c.fillStyle = opt.text || '#12315e'; c.font = `bold ${h * 0.085}px Arial Black, Arial, sans-serif`; c.textBaseline = 'middle'; c.fillText(opt.name || 'LS AIR', 0.24 * w, vc - h * 0.065);
+      c.restore();
     }
     // Cockpitfenster
     c.fillStyle = '#0c1118';
@@ -114,7 +120,7 @@ export function buildAirliner(opt = {}) {
     return g;
   };
   for (const sd of [-1, 1]) {
-    const g = wing(sd); if (sd < 0) { const idx = g.index.array; for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; } g.computeVertexNormals(); }
+    const g = wing(sd); if (sd < 0) flipWinding(g);
     B.add('v', B.col(g, W));
     B.box('v', 0.22, 1.5, 1.4, sd * 16.5, 0.65, 8.4, col);
     B.cyl('v', 0.9, 0.85, 3.4, sd * 5.6, -1.65, -1.2, G, 14, Math.PI / 2); // Triebwerk
@@ -122,7 +128,7 @@ export function buildAirliner(opt = {}) {
     // Höhenleitwerk
     const hs = new THREE.Shape(); hs.moveTo(0, 0); hs.lineTo(sd * 6.2, 3.6); hs.lineTo(sd * 6.2, 4.6); hs.lineTo(0, 3.6); hs.closePath();
     const hg = new THREE.ExtrudeGeometry(hs, { depth: 0.14, bevelEnabled: false }); hg.rotateX(Math.PI / 2); hg.translate(0, 0.9, 13.2);
-    if (sd < 0) { const ix = hg.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; } hg.computeVertexNormals(); }
+    if (sd < 0) flipWinding(hg);
     B.add('v', B.col(hg, W));
   }
   // Seitenleitwerk
@@ -149,13 +155,13 @@ export function buildBizjet(opt = {}) {
   for (const sd of [-1, 1]) {
     const s = new THREE.Shape(); s.moveTo(0, 0); s.lineTo(sd * 8.2, 3.6); s.lineTo(sd * 8.2, 4.5); s.lineTo(0, 3.4); s.closePath();
     const g = new THREE.ExtrudeGeometry(s, { depth: 0.16, bevelEnabled: false }); g.rotateX(Math.PI / 2); g.translate(0, -0.45, -1.2);
-    if (sd < 0) { const ix = g.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; } g.computeVertexNormals(); }
+    if (sd < 0) flipWinding(g);
     B.add('v', B.col(g, W));
     B.cyl('v', 0.42, 0.4, 2.0, sd * 1.5, 0.35, 6.2, '#9aa0a6', 12, Math.PI / 2); // Heckträger-Triebwerke
     B.box('v', 0.7, 0.14, 1.6, sd * 0.4 - sd * 0.0, 0.4, 6.0, W);
     const hs = new THREE.Shape(); hs.moveTo(0, 0); hs.lineTo(sd * 2.8, 1.6); hs.lineTo(sd * 2.8, 2.2); hs.lineTo(0, 1.9); hs.closePath();
     const hg = new THREE.ExtrudeGeometry(hs, { depth: 0.1, bevelEnabled: false }); hg.rotateX(Math.PI / 2); hg.translate(0, 2.7, 7.3);
-    if (sd < 0) { const ix = hg.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; } hg.computeVertexNormals(); }
+    if (sd < 0) flipWinding(hg);
     B.add('v', B.col(hg, W));
     B.cyl('v', 0.05, 0.05, 1.6, sd * 1.0, -1.6, 0.5, '#8d949b', 6); B.cyl('v', 0.28, 0.28, 0.2, sd * 1.0, -2.3, 0.5, '#15171a', 10, 0, Math.PI / 2);
   }
@@ -169,16 +175,16 @@ export function buildBizjet(opt = {}) {
 
 // ---------- Kabineninnenraum (Liner mit Fensterlöchern, Boden, Sitze, Gepäckfächer) ----------
 export function buildCabin(kind) {
-  const jet = kind === 'jet', cfg = jet ? { L: 12.5, z0: -4.2, R: 1.3, FY: -0.6, rows: 4, pitch: 1.5, win: 0.2 } : { L: 31, z0: -15.8, R: 1.94, FY: -0.5, rows: 24, pitch: 0.82, win: 0.28 };
+  const jet = kind === 'jet', cfg = jet ? { L: 12.5, z0: -7.2, R: 1.3, FY: -0.6, rows: 4, pitch: 1.5, win: 0.36 } : { L: 31, z0: -15.8, R: 1.94, FY: -0.5, rows: 24, pitch: 0.82, win: 0.5 };
   const g = new THREE.Group(), z1 = cfg.z0 + cfg.L, R = cfg.R;
   // Liner (Innenseite) mit Alpha-Fenstern
-  const rows = jet ? 5 : cfg.rows + 2, winZ = []; for (let i = 0; i < rows; i++) winZ.push(cfg.z0 + (jet ? 1.4 + i * 1.8 : 3.6 + i * cfg.pitch));
+  const rows = jet ? 5 : cfg.rows + 2, winZ = []; for (let i = 0; i < rows; i++) winZ.push(cfg.z0 + (jet ? 2.4 + i * 2.2 : 3.2 + i * cfg.pitch));
   const tex = canvasTex(jet ? 512 : 2048, 256, (c, w, h) => {
     c.fillStyle = jet ? '#d8cfbf' : '#e6e3dc'; c.fillRect(0, 0, w, h);
     c.fillStyle = jet ? '#8a6c46' : '#b8b4aa'; c.fillRect(0, 0, w, h * 0.05);
     for (const th of [75, 285]) {
-      const vc = th / 360 * h;
-      for (const z of winZ) { const u = (z - cfg.z0) / cfg.L * w; c.clearRect(u - w / cfg.L * cfg.win / 2, vc - h * 0.045, w / cfg.L * cfg.win, h * 0.09); }
+      const vc = (1 - th / 360) * h, vh = jet ? 0.07 : 0.05;
+      for (const z of winZ) { const u = (z - cfg.z0) / cfg.L * w; c.clearRect(u - w / cfg.L * cfg.win / 2, vc - h * vh / 2, w / cfg.L * cfg.win, h * vh); }
     }
   }, true, false);
   const lg = new THREE.CylinderGeometry(R, R, cfg.L, 40, 1, true); lg.rotateX(Math.PI / 2); // Achse z
@@ -186,7 +192,7 @@ export function buildCabin(kind) {
   for (let i = 0; i < lp.count; i++) { const x = lp.getX(i), y = lp.getY(i), z = lp.getZ(i); const th = (Math.atan2(x, y) + Math.PI * 2) % (Math.PI * 2); lu.setXY(i, (z + cfg.L / 2) / cfg.L, th / (Math.PI * 2)); lp.setZ(i, z + cfg.z0 + cfg.L / 2); }
   // Nahtstelle: Vertices bei th~0/2pi doppelt -> Dreiecke über Naht lassen UV-Sprung; Zylinder hat doppelte Randvertices, daher ok
   lg.computeVertexNormals();
-  const liner = new THREE.Mesh(lg, new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.5, side: THREE.BackSide, roughness: 0.8, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.35 }));
+  const liner = new THREE.Mesh(lg, new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.5, side: THREE.BackSide, roughness: 0.8, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.12 }));
   g.add(liner);
   const B = new Batch(), fy = cfg.FY;
   // Boden (Teppich)

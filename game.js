@@ -10,6 +10,8 @@ import { GTAOPass } from 'three/addons/pp/GTAOPass.js';
 import { SMAAPass } from 'three/addons/pp/SMAAPass.js';
 import { ASSETS, loadAssets, modelInstance, photoTex } from './assets.js';
 import { loadHumans, makeHuman, animHuman, disposeHuman, setHumanShadow, aimPose, punchPose } from './humans.js';
+// ==== AIRPORT HOOK ==== Flughafen (airport.js)
+import { AIR, initAirport } from './airport.js';
 
 // ---------- Helpers ----------
 const $ = id => document.getElementById(id);
@@ -1239,7 +1241,7 @@ async function buildCity(progress) {
   buildProps();
   // Stadtgrenze
   const W = EXT + 14;
-  for (const [x, z, w, d] of [[0, -W, 2 * W + 4, 2], [0, W, 2 * W + 4, 2], [-W, 0, 2, 2 * W], [W, 0, 2, 2 * W]]) {
+  for (const [x, z, w, d] of [[0, -W, 2 * W + 4, 2], [0, W, 2 * W + 4, 2], [-W, 0, 2, 2 * W], [W, -W / 2 - 4, 2, W - 8], [W, W / 2 + 4, 2, W - 8]]) { // ==== AIRPORT HOOK ==== Ostwand mit Lücke für die Flughafenzufahrt (z = -8..8)
     addSolid(x - w / 2, x + w / 2, z - d / 2, z + d / 2, 4);
   }
 }
@@ -1265,7 +1267,7 @@ function buildTerrain() {
   const pos = g.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i), inCity = Math.abs(x) < EDGE - 2 && Math.abs(z) < EDGE - 2;
-    const h = inCity ? -0.6 : terrainH(x, z); pos.setY(i, h);
+    const h = inCity ? -0.6 : AIR.terrain(x, z, terrainH(x, z)); pos.setY(i, h); // ==== AIRPORT HOOK ====
     const n = fbm2(x / 40, z / 40);
     if (h < -0.4 && !inCity) c.set('#d8c9a0').lerp(new THREE.Color('#bba77a'), clamp(-h / 4, 0, 1));
     else if (h < 3 && (x < -EDGE + 30 || z > EDGE - 30)) c.set('#e2d4ab');
@@ -3662,7 +3664,7 @@ function intGround(x, z, y) {
   if (INT.cab && inR(ELEV) && INT.cab.y <= y + 0.45 && INT.cab.y > best) best = INT.cab.y;
   return best === -Infinity ? y - 5 : best;
 }
-const floorH = (x, z, y = 0.2) => { if (INT.active) { const [lx, lz] = toLocal(x, z); if (Math.abs(lx) < INT.W / 2 && Math.abs(lz) < INT.D / 2) return intGround(x, z, y); } return groundH(x, z); };
+const floorH = (x, z, y = 0.2) => { if (x > 540) { const af = AIR.floor(x, z, y); if (af !== undefined) return af; } /* // ==== AIRPORT HOOK ==== */ if (INT.active) { const [lx, lz] = toLocal(x, z); if (Math.abs(lx) < INT.W / 2 && Math.abs(lz) < INT.D / 2) return intGround(x, z, y); } return groundH(x, z); };
 function nearElevCall() { const [lx, lz] = toLocal(player.x, player.z); return !!INT.cab && Math.hypot(lx + 0.95, lz + 3.6) < 1.3 || !!INT.cab && Math.hypot(lx + 1.9, lz + 3.7) < 1.0; }
 function openElevator() { INT.menu = true; INT.panelMode = true; INT.sel = curFloorOf(player.y); drawLiftPanel(); sfx.click(); }
 const liftLab = f => f === 0 ? 'E' : String(f);
@@ -4339,10 +4341,10 @@ function respawn() {
     notice('Waffen beschlagnahmt', 3000);
   } else notice(bust ? `Polizeiwache Mission Row · Kaution: -$${bill} · Waffen beschlagnahmt` : `Krankenhaus Pillbox Hill · Rechnung: -$${bill}`, 3800);
 }
-function storeChar() { const c = CHARS[cur]; Object.assign(c.st, { x: player.x, z: player.z, yaw: player.yaw, hp: player.hp, armor: player.armor, money: player.money, bank: player.bank, inv: player.inv, respect: player.respect, hotel: player.hotel }); }
+function storeChar() { const c = CHARS[cur]; Object.assign(c.st, { x: player.x, z: player.z, yaw: player.yaw, hp: player.hp, armor: player.armor, money: player.money, bank: player.bank, inv: player.inv, respect: player.respect, hotel: player.hotel, ticket: player.ticket || null }); /* ==== AIRPORT HOOK ==== */ }
 function applyChar(i) {
   cur = i; const c = CHARS[i], st = c.st;
-  Object.assign(player, { x: st.x, z: st.z, yaw: st.yaw, hp: st.hp, armor: st.armor, money: st.money, bank: st.bank ?? c.bank, inv: st.inv || {}, hotel: st.hotel || null, respect: st.respect || 0, vx: 0, vz: 0, vy: 0, y: groundH(st.x, st.z), h: c.h, car: null });
+  Object.assign(player, { x: st.x, z: st.z, yaw: st.yaw, hp: st.hp, armor: st.armor, money: st.money, bank: st.bank ?? c.bank, inv: st.inv || {}, hotel: st.hotel || null, ticket: st.ticket || null, respect: st.respect || 0, vx: 0, vz: 0, vy: 0, y: groundH(st.x, st.z), h: c.h, car: null });
   c.h.group.visible = true;
   $('who').textContent = c.name; $('who').style.color = c.col;
   for (const k in HOMES) HOMES[k].marker.visible = k === c.home;
@@ -4545,8 +4547,8 @@ function useItem(k) {
 }
 function invMenu() {
   const inv = player.inv || {}, keys0 = Object.keys(inv).filter(k => inv[k] > 0);
-  if (!keys0.length) { notice('Inventar leer – in Läden und Tankstellen einkaufen', 1800); return; }
-  keepMenuSel(() => openMenu('Inventar', [...keys0.map(k => ({ label: `${ITEMS[k].ico} ${ITEMS[k].n} ×${inv[k]} – benutzen`, act: () => { useItem(k); if (Object.keys(player.inv || {}).length) invMenu(); return !!Object.keys(player.inv || {}).length; } })), { label: 'Schließen', act: () => false }]));
+  if (!keys0.length && !player.ticket) { notice('Inventar leer – in Läden und Tankstellen einkaufen', 1800); return; }
+  keepMenuSel(() => openMenu('Inventar', [...AIR.invRows(), ...keys0.map(k => ({ label: `${ITEMS[k].ico} ${ITEMS[k].n} ×${inv[k]} – benutzen`, act: () => { useItem(k); if (Object.keys(player.inv || {}).length) invMenu(); return !!Object.keys(player.inv || {}).length; } })), { label: 'Schließen', act: () => false }]));
 }
 let stealCd = 0;
 function nearShelf() { const Fc = INT.floors.get(curFloorOf(player.y)); if (!Fc || !['shop', 'market', 'gas'].includes(Fc.kind)) return null; const [lx, lz] = toLocal(player.x, player.z); return Fc.spots.find(sp => sp.type === 'shelf' && Math.hypot(sp.x - lx, sp.z - lz) < 1.6) ? Fc : null; }
@@ -4882,6 +4884,7 @@ let started = false, paused = false, showHelp = true;
 addEventListener('keydown', e => {
   keys[e.code] = true;
   if (!started || e.repeat) return;
+  if (!phone.open && !uiMenu && !INT.menu && !bigMap.open && AIR.key(e.code)) { e.preventDefault(); return; } // ==== AIRPORT HOOK ==== (E-Interaktionen, Flug überspringen)
   if (e.code === 'KeyF' && !player.dead && !switching && !seq && ride && !uiMenu && !phone.open) {
     if (player.ride) { if (ride.state === 'riding' && !ride.stopReq) rideStopHere(); return; }
     if (ride.state === 'waiting' && Math.hypot(...doorPoint(ride.car, -1).map((v, i) => v - (i ? player.z : player.x))) < 6) { boardRide(); return; }
@@ -5258,6 +5261,7 @@ function drawMinimap(camYaw, time) {
   const zoom = player.car ? 1.2 - Math.min(0.5, Math.abs(player.car.speedF || 0) / 80) : 1.4;
   mm.save(); mm.translate(W / 2, H * 0.62); mm.rotate(camYaw - Math.PI); mm.scale(zoom, zoom);
   mm.drawImage(mapCanvas, -(px + EXT) * MS, -(pz + EXT) * MS);
+  AIR.mini(mm, px, pz, MS); // ==== AIRPORT HOOK ====
   // Sichtkegel der Polizei
   if (wanted > 0) for (const c of cars) {
     if (c.mode !== 'police') continue;
@@ -5311,7 +5315,8 @@ function updateHUD() {
   if (player.jail && !player.dead) hint = jailHint();
   else if (!player.car && !player.dead && !switching && !player.ride) {
     const home = HOMES[CHARS[cur].home];
-    if (INT.inside) hint = interiorHint();
+    if (AIR.hint()) hint = AIR.hint(); // ==== AIRPORT HOOK ====
+    else if (INT.inside) hint = interiorHint();
     else if (home && Math.hypot(home.x - player.x, home.z - player.z) < 2) hint = 'Drücke <b>E</b>, um zu schlafen und zu speichern';
     else if (nearestDoor(player.x, player.z, 2.2)) { const b = nearestDoor(player.x, player.z, 2.2); hint = `${floorName(b, 0)} · einfach hineingehen`; }
     else if (nearATM()) hint = 'Drücke <b>E</b> für den Geldautomaten';
@@ -5449,10 +5454,10 @@ const DISTRICTS = [['Rockford-Hügel', 'Nordhügel', 'Mirror Park'], ['Weststran
 let POI_BLD = null;
 function visiblePOIs() {
   if (!POI_BLD) { POI_BLD = []; for (const b of BUILDINGS) if (b.door && (b.type === 'bank' || b.type === 'hotel')) POI_BLD.push({ x: b.door.x, z: b.door.z, col: b.type === 'bank' ? '#2fbf5a' : '#ff7ac8', sym: b.type === 'bank' ? '$' : 'H' }); }
-  return [...POIS.filter(p => !p.home || p.home === CHARS[cur].home), ...POI_BLD];
+  return [...POIS.filter(p => !p.home || p.home === CHARS[cur].home), ...POI_BLD, ...AIR.pois]; // ==== AIRPORT HOOK ====
 }
-const LEGEND = [['⌂', '#9be389', 'Dein Zuhause'], ['+', '#ff4040', 'Krankenhaus'], ['P', '#4a7dff', 'Polizei'], ['⛓', '#d8a860', 'Gefängnis'], ['S', '#ff6a3a', 'Supermarkt'], ['G', '#3aa0ff', 'Tankstelle'], ['$', '#2fbf5a', 'Bank'], ['H', '#ff7ac8', 'Hotel']];
-function districtOf(x, z) { const f = v => v < -EXT / 3 ? 0 : v > EXT / 3 ? 2 : 1; return DISTRICTS[f(z)][f(x)]; }
+const LEGEND = [['⌂', '#9be389', 'Dein Zuhause'], ['+', '#ff4040', 'Krankenhaus'], ['P', '#4a7dff', 'Polizei'], ['⛓', '#d8a860', 'Gefängnis'], ['S', '#ff6a3a', 'Supermarkt'], ['G', '#3aa0ff', 'Tankstelle'], ['$', '#2fbf5a', 'Bank'], ['H', '#ff7ac8', 'Hotel'], ['✈', '#4aa8ff', 'Flughafen']];
+function districtOf(x, z) { if (x > 560 && x < 3000) return 'Flughafen'; const f = v => v < -EXT / 3 ? 0 : v > EXT / 3 ? 2 : 1; return DISTRICTS[f(z)][f(x)]; }
 let waypoint = null;
 const wpBeam = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 160, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0xb46cff, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
 wpBeam.visible = false; scene.add(wpBeam);
@@ -5510,7 +5515,7 @@ function updateWaypoint() {
 // Große Karte (M)
 const bigMap = { open: false };
 const bm = $('bigmap'), bmc = bm.querySelector('canvas'), bmx = bmc.getContext('2d');
-let satCanvas = null; const SAT_HALF = EXT + 120;
+let satCanvas = null; const SAT_HALF = EXT + 560; // ==== AIRPORT HOOK ==== Karte reicht bis zum Flughafen
 function renderSatellite() {
   const S = 2048, rt = new THREE.WebGLRenderTarget(S, S);
   const cam = new THREE.OrthographicCamera(-SAT_HALF, SAT_HALF, SAT_HALF, -SAT_HALF, 10, 3000); cam.position.set(0, 1500, 0); cam.up.set(0, 0, -1); cam.lookAt(0, 0, 0);
@@ -5539,7 +5544,7 @@ function drawBigMap() {
   DISTRICTS.forEach((row, j) => row.forEach((n, i) => { const [a, b] = w2s(-EXT + EXT * 2 * (i + 0.5) / 3, -EXT + EXT * 2 * (j + 0.5) / 3); bmx.strokeText(n.toUpperCase(), a, b); bmx.fillText(n.toUpperCase(), a, b); }));
   for (const [n, x, z] of [['PAZIFIK', -EXT - 90, 0], ['VINEWOOD HILLS', -150, -EXT - 80], ['HAFEN', 260, EXT + 80]]) { const [a, b] = w2s(x, z); bmx.strokeText(n, a, b); bmx.fillText(n, a, b); }
   const dot = (x, z, col, r, sym) => { const [a, b] = w2s(x, z); bmx.fillStyle = '#000'; bmx.beginPath(); bmx.arc(a, b, r + 3, 0, 7); bmx.fill(); bmx.fillStyle = col; bmx.beginPath(); bmx.arc(a, b, r, 0, 7); bmx.fill(); if (sym) { bmx.fillStyle = '#000'; bmx.font = `bold ${r * 1.4}px Arial`; bmx.textBaseline = 'middle'; bmx.fillText(sym, a, b + 1); } };
-  drawRoute(bmx, w2s, 6);
+  drawRoute(bmx, w2s, 6); AIR.bigmap(bmx, w2s); // ==== AIRPORT HOOK ====
   for (const p of visiblePOIs()) dot(p.x, p.z, p.col, 11, p.sym);
   { bmx.save(); const lx = 18, ly = S - 26 - LEGEND.length * 30; bmx.fillStyle = 'rgba(8,10,14,.72)'; bmx.fillRect(lx - 8, ly - 26, 210, LEGEND.length * 30 + 22);
     bmx.textAlign = 'left'; bmx.textBaseline = 'middle'; LEGEND.forEach(([sy, col, name], k) => { const y = ly + k * 30; bmx.fillStyle = '#000'; bmx.beginPath(); bmx.arc(lx + 12, y, 13, 0, 7); bmx.fill(); bmx.fillStyle = col; bmx.font = 'bold 17px Arial'; bmx.textAlign = 'center'; bmx.fillText(sy, lx + 12, y + 1); bmx.textAlign = 'left'; bmx.fillStyle = '#fff'; bmx.font = 'bold 18px Arial'; bmx.fillText(name, lx + 34, y + 1); }); bmx.restore(); }
@@ -5607,7 +5612,8 @@ freshAll(CALL_LINES);
 function contacts() {
   return [...EXTRA_CONTACTS, { name: 'Downtown Cab Co.', col: '#f2c200', ride: 'taxi' }, { name: 'Chauffeur-Service', col: '#c9b27a', ride: 'chauffeur' }];
 }
-function phoneApps() { return [{ id: 'ride', name: 'LS Ride', ico: '🚕' }, { id: 'bank', name: 'Fleeca Bank', ico: '🏦' }, { id: 'contacts', name: 'Kontakte', ico: '👤' }, { id: 'scanner', name: scannerOn ? 'Funk: AN' : 'Funk: AUS', ico: '📻' }, { id: 'map', name: 'Karte', ico: '🗺️' }, { id: 'meet', name: meeting ? 'Treffen absagen' : 'Kein Termin', ico: '📅' }]; }
+function phoneApps() { return [{ id: 'ride', name: 'LS Ride', ico: '🚕' }, { id: 'bank', name: 'Fleeca Bank', ico: '🏦' }, { id: 'contacts', name: 'Kontakte', ico: '👤' }, { id: 'scanner', name: scannerOn ? 'Funk: AN' : 'Funk: AUS', ico: '📻' }, { id: 'map', name: 'Karte', ico: '🗺️' }, { id: 'meet', name: meeting ? 'Treffen absagen' : 'Kein Termin', ico: '📅' }, { id: 'air', name: 'LS Air', ico: '✈️' }, { id: 'jets', name: 'LS Jets', ico: '🛩️' }]; // ==== AIRPORT HOOK ====
+}
 function renderPhone() {
   const el = $('phone'), h = Math.floor(gameMin / 60) % 24, m = Math.floor(gameMin % 60);
   let body = '';
@@ -5617,6 +5623,7 @@ function renderPhone() {
     const est = k => waypoint ? 'ca. ' + fmt(rideEstimate(k)) : 'ab ' + fmt(RIDE[k].base);
     body = `<div class="ttl">LS Ride</div>${['taxi', 'chauffeur'].map((k, i) => `<div class="row ro${i === phone.sel ? ' sel' : ''}"><b>${k === 'taxi' ? '🚕' : '🚘'}</b><div>${RIDE[k].name}<small>${k === 'taxi' ? 'Du steigst selbst ein' : 'Fahrer öffnet dir die Tür'} · ${est(k)}</small></div></div>`).join('')}<div class="row${phone.sel === 2 ? ' sel' : ''}">Zahlung: <b>${(phone.pay || 'card') === 'card' ? '💳 Karte' : '💵 Bar'}</b></div><small class="ri">${waypoint ? 'Ziel: ' + districtOf(waypoint.x, waypoint.z) : 'Ziel später auf der Karte (M) setzen'}</small>`;
   }
+  else if (phone.screen === 'air' || phone.screen === 'jets') body = AIR.phoneHTML(phone.screen); // ==== AIRPORT HOOK ====
   else if (phone.screen === 'ridestatus') body = rideStatusHTML();
   else if (phone.screen === 'bank') body = `<div class="ttl">Fleeca Mobile</div><div class="bank"><small>Girokonto</small><b>${fmt(player.bank || 0)}</b><small>Bargeld</small><b>${fmt(player.money)}</b></div><small class="ri">Ein- und Auszahlen am Geldautomaten oder am Schalter einer Fleeca-Filiale.</small>`;
   else if (phone.screen === 'call') body = `<div class="call"><i style="background:${phone.who.col}"></i><div>${phone.who.name}</div><small>${phone.status}</small></div>`;
@@ -5627,6 +5634,7 @@ function openPhone() { if (player.dead || switching) return; phone.open = true; 
 function closePhone() { phone.open = false; $('phone').style.display = 'none'; }
 function phoneKey(code) {
   if (phone.busy) return;
+  if (AIR.phoneKey(phone, code)) { sfx.click(); renderPhone(); return; } // ==== AIRPORT HOOK ====
   const list = phone.screen === 'home' ? phoneApps() : phone.screen === 'contacts' ? contacts() : phone.screen === 'ride' ? [0, 1, 2] : phone.screen === 'ridestatus' ? [0] : [];
   if (code === 'KeyW' || code === 'ArrowUp') phone.sel = (phone.sel - (phone.screen === 'home' ? 2 : 1) + list.length) % Math.max(1, list.length);
   else if (code === 'KeyS' || code === 'ArrowDown') phone.sel = (phone.sel + (phone.screen === 'home' ? 2 : 1)) % Math.max(1, list.length);
@@ -5639,6 +5647,7 @@ function phoneKey(code) {
       if (a === 'contacts') { phone.screen = 'contacts'; phone.sel = 0; }
       else if (a === 'ride') { phone.screen = ride ? 'ridestatus' : 'ride'; phone.sel = 0; }
       else if (a === 'bank') { phone.screen = 'bank'; phone.sel = 0; }
+      else if (a === 'air' || a === 'jets') { phone.screen = a; phone.sel = 0; AIR.phoneOpen(phone, a); } // ==== AIRPORT HOOK ====
       else if (a === 'scanner') { scannerOn = !scannerOn; scanT = 2; notice('Polizeifunk ' + (scannerOn ? 'an' : 'aus'), 1200); }
       else if (a === 'map') { closePhone(); openMap(); return; }
       else if (a === 'meet' && meeting) { cancelMeeting(); notice('Treffen abgesagt', 1400); }
@@ -5726,6 +5735,7 @@ const camTarget = new THREE.Vector3();
 const headlight = new THREE.SpotLight(0xfff1d6, 0, 70, 0.5, 0.5, 1.2); scene.add(headlight, headlight.target);
 const _pv1 = new THREE.Vector3(), _pv2 = new THREE.Vector3(), _pv3 = new THREE.Vector3();
 function updateCamera(dt) {
+  if (AIR.camera(dt)) { mouseDX = mouseDY = 0; return; } // ==== AIRPORT HOOK ==== Flug-Kamera
   if (INT.panelMode && INT.cab) {
     const Pn = INT.cab.panel; Pn.updateMatrixWorld(); Pn.getWorldPosition(_pv1); _pv2.set(0, 0, 1).transformDirection(Pn.matrixWorld);
     _pv3.copy(_pv1).addScaledVector(_pv2, 0.62); _pv3.y += 0.05; if (camera.position.distanceTo(_pv3) > 2.5) camera.position.copy(_pv3); else camera.position.lerp(_pv3, Math.min(1, dt * 7)); camera.lookAt(_pv1);
@@ -5756,6 +5766,7 @@ function updateCamera(dt) {
     const sx = -Math.cos(camYaw) * (aim ? 0.75 : 0.45), sz = Math.sin(camYaw) * (aim ? 0.75 : 0.45);
     tx = player.x + sx; ty = player.y + 1.65; tz = player.z + sz; dist = aim ? 2.6 : 4.4;
     if (player.dead) { dist = 6; camPitch = lerp(camPitch, 0.9, dt * 0.5); }
+    { const al = AIR.camLimit(); if (al) { dist = Math.min(dist, al.dist); camPitch = Math.min(camPitch, al.pitch); } } // ==== AIRPORT HOOK ====
     if (INT.inside) { dist = Math.min(dist, 2.9); camPitch = Math.min(camPitch, 0.55); if (INT.cab && inCab()) { dist = Math.min(dist, 1.7); camPitch = clamp(camPitch, 0.05, 0.45); } }
     camera.fov = lerp(camera.fov, aim ? 55 : 68, dt * 6);
   }
@@ -5767,6 +5778,7 @@ function updateCamera(dt) {
   const inLift = INT.active && INT.cab && !player.car && inCab(); // in der Kabine: Kamera nur durch die Kabinenwände begrenzen (Tür-/Etagenkollision ließ sie beim Anfahren ab- und hochspringen)
   if (!inLift) for (let s = 0.3; s <= camDist; s += 0.2) if (solidAt(tx + dx * s, ty + dy * s, tz + dz * s)) { d = Math.max(0.6, s - 0.4); break; }
   camera.position.set(tx + dx * d, Math.max(ty + dy * d, INT.inside ? player.y + 0.3 : 0.4), tz + dz * d);
+  AIR.camFix(camera); // ==== AIRPORT HOOK ====
   if (INT.inside && !inLift) camera.position.y = Math.min(camera.position.y, Math.max(floorY(curFloorOf(player.y)) + 3.15, player.y + 1.9));
   if (inLift) {
     let [clx, clz] = toLocal(camera.position.x, camera.position.z); clx = clamp(clx, ELEV[0] + 0.12, ELEV[1] - 0.12); clz = clamp(clz, ELEV[2] + 0.12, ELEV[3] - 0.12);
@@ -5794,6 +5806,7 @@ function updatePlayer(dt, raw) {
   player.fireCd -= dt; player.aimT -= dt;
   if (uiMenu && uiMenuPos && Math.hypot(player.x - uiMenuPos[0], player.z - uiMenuPos[1]) > 3) closeMenu();
   if (seq && !player.dead) { updateSeq(dt); return; }
+  if (AIR.control(dt)) return; // ==== AIRPORT HOOK ====
   if (player.dead) {
     player.dead -= raw;
     if (player.dead < 1.2 && !$('fade').classList.contains('on')) fade(true);
@@ -6090,6 +6103,7 @@ function simulate(dt, raw, raw0, time) {
   updatePickups(dt, time);
   updateWanted(dt); updateCrimeCalls(dt);
   updateGrenades(dt); updateScanner(dt); updateMeeting(dt); updateWaypoint(); updateNav(dt);
+  AIR.update(dt); // ==== AIRPORT HOOK ====
   for (let i = tracers.length - 1; i >= 0; i--) { if ((tracers[i].t -= dt) < 0) { scene.remove(tracers[i].m); tracers.splice(i, 1); } }
   flash.intensity = Math.max(0, flash.intensity - dt * 600);
   const hm = HOMES[CHARS[cur].home]; if (hm) { hm.marker.scale.y = 1 + Math.sin(time * 3) * 0.15; hm.marker.material.opacity = 0.3 + Math.sin(time * 3) * 0.1; }
@@ -6114,7 +6128,7 @@ function frame() {
   updateParticles(fire, dt, 1.5); updateParticles(smoke, dt, 0.6);
   if (WHEEL) WHEEL.rotation.z += dt * 0.05; if (TEX.water) TEX.water.offset.set(time * 0.004, time * 0.0025);
   updateCamera(Math.max(dt, 0.001));
-  updateSky();
+  updateSky(); AIR.post(); // ==== AIRPORT HOOK ====
   const ts = 190 / 4096, sx = Math.round(player.x / ts) * ts, sz = Math.round(player.z / ts) * ts;
   const ld = sky.sunDir.y > 0 ? sky.sunDir : sky.sunDir.clone().negate();
   sun.target.position.set(sx, 0, sz); sun.position.set(sx + ld.x * 250, ld.y * 250, sz + ld.z * 250);
@@ -6154,12 +6168,21 @@ async function boot() {
   const loaded = loadGame();
   cur = 0; // Spiel startet immer als Franklin (gespeicherte Zustände bleiben)
   applyChar(cur);
+  initAirport({ // // ==== AIRPORT HOOK ====
+    scene, camera, player, TEX, sfx, ITEMS, sky, sun, hemi, makeCar,
+    notice, say, banner, fade, pay, fmt, setWaypoint, openMenu, saveGame, addSolid, removeSolid,
+    restoreSolid: s => { for (let cx = Math.floor(s.minx / CELL); cx <= Math.floor(s.maxx / CELL); cx++) for (let cz = Math.floor(s.minz / CELL); cz <= Math.floor(s.maxz / CELL); cz++) { const k = ckey(cx, cz); if (!solids.has(k)) solids.set(k, []); solids.get(k).push(s); } },
+    getGameMin: () => gameMin, addGameMin: v => { gameMin = (gameMin + v) % 1440; }, getWanted: () => wanted, clearWanted: () => { if (wanted > 0) escapeWanted(); },
+    getWeapon: () => weapon, setWeapon: v => { weapon = v; }, charName: () => CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase(),
+    closePhone, getCamYaw: () => camYaw, camReset: yaw => { camYaw = yaw + Math.PI; camPitch = 0.25; }, skyFollow: () => skyDome.position.copy(camera.position),
+  });
+  AIR.afterLoad();
   camYaw = player.yaw + 0.5;
   for (let i = 0; i < 26; i++) spawnTraffic(25, 260);
   for (let i = 0; i < 18; i++) spawnParked(15, 230);
   for (let i = 0; i < 50; i++) spawnPed(6, 130);
   worldReady = true;
-  window.__game = { camStep(dt) { updateCamera(dt); }, dbgSolids(x, z, r) { const o = [], seen = new Set(); for (let cx = Math.floor((x - r) / CELL); cx <= Math.floor((x + r) / CELL); cx++) for (let cz = Math.floor((z - r) / CELL); cz <= Math.floor((z + r) / CELL); cz++) for (const s of solids.get(ckey(cx, cz)) || []) if (!seen.has(s) && s.maxx > x - r && s.minx < x + r && s.maxz > z - r && s.minz < z + r) { seen.add(s); o.push([s.minx, s.maxx, s.minz, s.maxz, s.h, s.y0]); } return o; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, knockPlayer, jailReset, get navRoute() { return navRoute; }, holdItem, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get hail() { return hail; }, get uiMenu() { return uiMenu; }, get pendingCall() { return pendingCall; }, respawn, carStep, makeCar, groundH, doorPoint, seatLocal, carLocal, get seq() { return seq; }, enterCar, exitCar, inCab, get phone() { return phone; } };
+  window.__game = { AIR, get ticket() { return player.ticket; }, camStep(dt) { updateCamera(dt); }, dbgSolids(x, z, r) { const o = [], seen = new Set(); for (let cx = Math.floor((x - r) / CELL); cx <= Math.floor((x + r) / CELL); cx++) for (let cz = Math.floor((z - r) / CELL); cz <= Math.floor((z + r) / CELL); cz++) for (const s of solids.get(ckey(cx, cz)) || []) if (!seen.has(s) && s.maxx > x - r && s.minx < x + r && s.maxz > z - r && s.minz < z + r) { seen.add(s); o.push([s.minx, s.maxx, s.minz, s.maxz, s.h, s.y0]); } return o; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, knockPlayer, jailReset, get navRoute() { return navRoute; }, holdItem, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get hail() { return hail; }, get uiMenu() { return uiMenu; }, get pendingCall() { return pendingCall; }, respawn, carStep, makeCar, groundH, doorPoint, seatLocal, carLocal, get seq() { return seq; }, enterCar, exitCar, inCab, get phone() { return phone; } };
   progress(0.9, CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase() + ' wird geweckt …'); await nextFrame();
   progress(0.95, 'Shader werden kompiliert …'); await nextFrame();
   updateCamera(0.016);

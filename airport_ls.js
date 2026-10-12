@@ -88,7 +88,7 @@ export function buildLS(env) {
   for (let i = 0; i < 4; i++) for (const sx of [-1, 1]) B.box('e', 0.7, 0.5, 0.7, R.x + sx * 22, 0.3, R.z1 + 20 + i * 2, i % 2 ? '#ff3a2a' : '#ffffff');
   // ---------- Terminal-Hülle ----------
   const mid = (T.z0 + T.z1) / 2, tl = T.z1 - T.z0, tw = T.x1 - T.x0, H = T.H;
-  const floorTex = tex(512, 512, (c, w, h) => { c.fillStyle = '#d9d6cf'; c.fillRect(0, 0, w, h); c.strokeStyle = 'rgba(70,70,70,.35)'; c.lineWidth = 2; c.strokeRect(0, 0, w, h); c.strokeStyle = 'rgba(255,255,255,.4)'; c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.moveTo(w / 2, 0); c.lineTo(w / 2, h); c.stroke(); for (let i = 0; i < 1800; i++) { c.fillStyle = `rgba(0,0,0,${Math.random() * 0.04})`; c.fillRect(Math.random() * w, Math.random() * h, 4, 4); } }, [tw / 4, tl / 4]);
+  const floorTex = tex(512, 512, (c, w, h) => { c.fillStyle = '#a9a69f'; c.fillRect(0, 0, w, h); c.strokeStyle = 'rgba(70,70,70,.35)'; c.lineWidth = 2; c.strokeRect(0, 0, w, h); c.strokeStyle = 'rgba(255,255,255,.4)'; c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.moveTo(w / 2, 0); c.lineTo(w / 2, h); c.stroke(); for (let i = 0; i < 1800; i++) { c.fillStyle = `rgba(0,0,0,${Math.random() * 0.04})`; c.fillRect(Math.random() * w, Math.random() * h, 4, 4); } }, [tw / 4, tl / 4]);
   const fm = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.25, metalness: 0.1 });
   quad(out.interior, fm, tw, tl, (T.x0 + T.x1) / 2, 0.06, mid);
   // Dach & Fassaden
@@ -170,25 +170,19 @@ export function buildLS(env) {
   }
   out.shops = shops;
   // Sicherheitswand (x=804..806) mit Spur z in [-3,3], Nebenspuren dekorativ
-  IB.box('v', 2, H, 120 - 0, 805, H / 2, -62.5 - 0, '#d6d9dd'); // wird unten ersetzt
-  IB.m.get('v').pop();
-  IB.box('v', 2, H, 124, 805, H / 2, -62 - 3, '#d6d9dd'); IB.m.get('v').pop();
   const wallSeg = (z0, z1) => { IB.box('v', 2, H, z1 - z0, 805, H / 2, (z0 + z1) / 2, '#d6d9dd'); sol(804, 806, z0, z1, H); };
-  wallSeg(T.z0, -13); wallSeg(13, T.z1);
+  wallSeg(T.z0, -3.2); wallSeg(3.2, T.z1);
   // Nebenspuren (dekorativ, mit Förderbändern und Scannerbögen) bei z=-8 (gesperrt) und z=+8
   wallSeg(-13 + 0, -13); // no-op
   for (const lz of [-8, 8]) {
-    IB.box('v', 0.3, 1.0, 20, 805, 0.5, lz, '#8d949b'); // Band
     IB.box('m', 6, 0.25, 0.9, 812, 0.85, lz - 1.9, '#2a2d31'); IB.box('v', 3, 1.6, 1.4, 816, 0.8, lz - 1.9, '#2c3e5a'); IB.box('m', 4, 0.25, 0.9, 822, 0.85, lz - 1.9, '#2a2d31');
     IB.box('v', 0.12, 2.3, 0.12, 817, 1.15, lz + 0.8, '#cfd3d8'); IB.box('v', 0.12, 2.3, 0.12, 817, 1.15, lz - 0.8 + 2.3, '#cfd3d8'); IB.box('v', 0.12, 0.12, 2.6, 817, 2.3, lz + 0.8 + 0.8, '#cfd3d8');
   }
-  sol(804, 826, -7, -3.2, 3); // Trennwand Spur 0 / Spur -8: Band-Tisch
-  sol(804, 826, 3.2, 7, 3);
   // Spur-Wände der Hauptspur
   for (const sd of [-1, 1]) { IB.box('v', 36, 1.0, 0.3, 808, 0.5, sd * 3.2, '#cdd2d8'); IB.box('v', 36, 0.6, 0.05, 808, 1.3, sd * 3.2, '#9fb7c9'); sol(790, 826, sd * 3.2 - 0.15, sd * 3.2 + 0.15, 1.4); }
   // Absperr-Schranken (Einlass 1: Ticketkontrolle, 2: vor Scanner, 3: Ausgang)
   const barrier = (x, label) => { const mk = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.1, 6.2), new THREE.MeshStandardMaterial({ color: 0xff3b2a, transparent: true, opacity: 0.55, emissive: 0xff2a1a, emissiveIntensity: 0.6 })); mk.position.set(x, 0.62, 0); out.interior.add(mk); const s = sol(x - 0.15, x + 0.15, -3.2, 3.2, 1.6); return { m: mk, s, x }; };
-  out.barr = [barrier(802.4), barrier(812.4), barrier(821.8)];
+  out.barr = [barrier(802.4), barrier(812.4), barrier(826.4)];
   // Warteschlangen-Pfosten
   for (let x = 790; x <= 800; x += 2.5) for (const z of [-3.0, 3.0]) IB.box('m', 0.08, 0.95, 0.08, x, 0.48, z, '#222');
   // Ticket-Pult & Gepäck-Tisch & Scannerbogen & Förderband (Hauptspur)
