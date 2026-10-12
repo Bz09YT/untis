@@ -87,7 +87,18 @@ export function setHumanShadow(h, on) { if (h.cast === on) return; h.cast = on; 
 function rot(b, x, y, z) { if (!b) return; _e.set(x * Math.PI / 180, y * Math.PI / 180, z * Math.PI / 180); _q.setFromEuler(_e); b.quaternion.multiply(_q); }
 const POSES = {
   sit(h) { const B = h.B; rot(B.LeftUpLeg, -90, 0, 0); rot(B.RightUpLeg, -90, 0, 0); rot(B.LeftLeg, 90, 0, 0); rot(B.RightLeg, 90, 0, 0); h.body.position.y = -0.45; },
-  type(h, t) { POSES.sit(h); armsForward(h, 60, 70, 80, Math.sin(t * 14) * 3); },
+  // Büro: tippen mit beiden Händen versetzt, zwischendurch zurücklehnen, umsehen, Kaffee trinken, strecken
+  type(h, t) {
+    POSES.sit(h); const B = h.B, ph = Math.floor((t + (h.seedT ??= Math.random() * 40)) / 7) % 6, br = Math.sin(t * 1.6) * 1.5;
+    rot(B.Spine, br, 0, 0);
+    if (ph === 3) { rot(B.Spine1, -10, 0, 0); armsForward(h, 30, 45, 60, 0); rot(B.Head, -5, Math.sin(t * 0.7) * 40, 0); return; }
+    if (ph === 4) { armsForward(h, 60, 70, 80, 0); armTo(h, 'Right', 'smoke', (Math.sin(t * 1.2) + 1) / 2); rot(B.Head, 6, 0, 0); return; }
+    if (ph === 5 && (t % 7) < 2.2) { const k = Math.sin(((t % 7) / 2.2) * Math.PI); rot(B.RightArm, 60 - k * 100, 0, -70); rot(B.LeftArm, 60 - k * 100, 0, 70); rot(B.Spine1, -k * 8, 0, 0); return; }
+    const a = Math.sin(t * 17) * 7, b = Math.sin(t * 15 + 1.7) * 7, B2 = h.B;
+    rot(B2.RightArm, 60, 0, -70); rot(B2.RightForeArm, -80 + a, 0, 0); rot(B2.LeftArm, 60, 0, 70); rot(B2.LeftForeArm, -80 + b, 0, 0);
+    rot(B2.RightHand, Math.sin(t * 23) * 10, 0, 0); rot(B2.LeftHand, Math.sin(t * 21 + 1) * 10, 0, 0);
+    rot(B2.Head, 8 + Math.sin(t * 0.9) * 3, Math.sin(t * 0.35) * 10, 0);
+  },
   drive(h) { POSES.sit(h); armsForward(h, 75, 55, 55); },
   handsup(h) { const B = h.B; rot(B.RightArm, 0, 0, -150); rot(B.LeftArm, 0, 0, 150); rot(B.RightForeArm, -40, 0, 0); rot(B.LeftForeArm, -40, 0, 0); },
   watch(h) { POSES.sit(h); rot(h.B.Spine, -8, 0, 0); },
@@ -97,7 +108,8 @@ const POSES = {
   cook(h, t) { armsForward(h, 75, 60, 60, Math.sin(t * 4) * 8); rot(h.B.Head, 20, 0, 0); },
   browse(h, t) { rot(h.B.Head, 8, Math.sin(t * 0.6) * 30, 0); },
   look(h, t) { rot(h.B.Head, 0, Math.sin(t * 0.5) * 35, 0); },
-  talk() {}, stand() {},
+  talk(h, t) { rot(h.B.Head, 0, Math.sin(t * 0.8) * 12, 0); rot(h.B.RightForeArm, -20 - Math.max(0, Math.sin(t * 2.3)) * 35, 0, 0); },
+  stand(h, t) { rot(h.B.Spine, Math.sin(t * 1.5) * 1.2, 0, 0); rot(h.B.Head, 0, Math.sin(t * 0.45 + (h.seedT ??= Math.random() * 40)) * 25, 0); },
 };
 // Armhaltungen (im Testlauf kalibriert: Ellbogen beugt um lokale X-Achse, Oberarm hebt um Z)
 function armsForward(h, up, side, elbow, wiggle = 0) {

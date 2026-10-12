@@ -480,6 +480,14 @@ function updatePrison(dt) {
   }
 }
 let lampGlow = null;
+// Innenraum-Stile: jedes Gebäude bekommt eine eigene Einrichtungslinie
+const THEMES = [
+  { id: 'modern', walls: ['#eef0f2', '#e4e7ea', '#f4f4f2'], accent: ['#2f6fdb', '#1f9d8a'], floor: ['wood2', 'tile'], lobby: ['tile', 'tile2'], desk: ['#f2f2f2', '#e6e6e6'], glass: true },
+  { id: 'classic', walls: ['#d9c7a7', '#e2d4b8', '#cdbb98'], accent: ['#5a2a2a'], floor: ['carpet', 'carpet2'], lobby: ['wood', 'wood2'], desk: ['#5a3a24', '#6b4a32'], wains: '#5a3a24' },
+  { id: 'startup', walls: ['#f4f1ea', '#ebe8e0'], accent: ['#ff6b5b', '#2ec4b6', '#ffd166', '#8e7dff'], floor: ['tile2', 'wood'], lobby: ['tile2'], desk: ['#d8c4a0', '#f2f2f2'], accentWalls: true },
+  { id: 'loft', walls: ['#a85f48', '#9a5644', '#b46a50'], accent: ['#2a2c30'], floor: ['tile2', 'wood2'], lobby: ['tile2', 'wood2'], desk: ['#2a2c30', '#3a3d42'] },
+  { id: 'corporate', walls: ['#dfe4e8', '#d6dce2'], accent: ['#0d2b52', '#3a4a5c'], floor: ['carpet2', 'carpet'], lobby: ['tile', 'tile2'], desk: ['#9aa0a6', '#c8ccd0'], glass: true, accentWalls: true },
+];
 // ---------- Umfahrbare Straßenmöbel (Laternen, Ampeln, Hydranten) ----------
 const KNOCK = [], KGRID = new Map(), KFALL = [], VENDS = [];
 const kkey = (x, z) => Math.floor(x / 16) + ',' + Math.floor(z / 16);
@@ -645,9 +653,28 @@ function addBuilding(chunk, bx, bz, w, d, floors, cx, cz, low, solid) {
     const [nx, nz] = DIRS[side], tx = -nz, tz = nx;
     const fx = bx + nx * w / 2, fz = bz + nz * d / 2;
     const ob = (along, h, thick, off, y, col) => chunk.roofs.push(nx ? box(thick, h, along, fx + nx * off, y, fz, col) : box(along, h, thick, fx, y, fz + nz * off, col));
-    ob(2.8, 3.1, 0.3, 0.1, 0.2 + 1.55, '#2a2c30');
-    ob(2.0, 2.6, 0.12, 0.22, 0.2 + 1.3, type === 'shop' ? '#3a5068' : '#1d2a38');
-    ob(type === 'shop' ? 6 : 3.6, 0.14, 1.5, 0.75, 0.2 + 3.4, pick(AWNING));
+    const tall = floors > 11, ent = type === 'shop' ? 'shop' : type === 'hotel' ? 'hotel' : type === 'bank' ? 'bank' : tall ? 'tower' : type === 'apartment' ? 'apt' : pick(['office', 'apt']);
+    const frame = pick(['#2a2c30', '#3a3328', '#b8b2a8', '#1a2a3a', '#5a5f66']), tint = pick(['#1d2a38', '#24323e', '#2a3a30', '#30283a']);
+    if (ent === 'tower') {
+      ob(5.2, 4.2, 0.3, 0.1, 0.2 + 2.1, frame); ob(4.4, 3.8, 0.12, 0.22, 0.2 + 1.9, tint);
+      ob(7.5, 0.25, 3.2, 1.6, 0.2 + 4.6, '#d0d4d8'); for (const sgn of [-1, 1]) chunk.roofs.push(nx ? box(0.18, 4.6, 0.18, fx + nx * 3.0, 0.2 + 2.3, fz + sgn * 3.4, '#9aa0a6') : box(0.18, 4.6, 0.18, fx + sgn * 3.4, 0.2 + 2.3, fz + nz * 3.0, '#9aa0a6'));
+    } else if (ent === 'hotel') {
+      ob(4.2, 3.4, 0.3, 0.1, 0.2 + 1.7, '#3a2a1a'); ob(3.4, 3.0, 0.12, 0.22, 0.2 + 1.5, '#2a1e14');
+      ob(3.4, 0.3, 6, 3.1, 0.2 + 3.5, '#7a1020'); ob(2.0, 0.03, 6, 3.1, 0.2 + 0.02, '#a01828');
+      for (const sgn of [-1, 1]) chunk.roofs.push(nx ? box(0.12, 3.5, 0.12, fx + nx * 6.0, 0.2 + 1.75, fz + sgn * 1.6, '#c8a860') : box(0.12, 3.5, 0.12, fx + sgn * 1.6, 0.2 + 1.75, fz + nz * 6.0, '#c8a860'));
+    } else if (ent === 'bank') {
+      ob(3.4, 3.4, 0.3, 0.1, 0.2 + 1.7, '#e8e4dc'); ob(2.4, 2.9, 0.12, 0.22, 0.2 + 1.45, '#1d2a38');
+      for (const sgn of [-1, 1]) chunk.roofs.push(nx ? box(0.7, 4.2, 0.7, fx + nx * 0.8, 0.2 + 2.1, fz + sgn * 2.4, '#f0ece4') : box(0.7, 4.2, 0.7, fx + sgn * 2.4, 0.2 + 2.1, fz + nz * 0.8, '#f0ece4'));
+      ob(6, 0.5, 1.6, 0.7, 0.2 + 4.4, '#e8e4dc');
+    } else if (ent === 'apt') {
+      ob(2.4, 2.9, 0.3, 0.1, 0.2 + 1.45, frame); ob(1.6, 2.5, 0.12, 0.22, 0.2 + 1.25, pick(['#5a3a24', '#2a3a4a', '#6a2a2a', '#2a4a3a']));
+      ob(2.6, 0.12, 1.2, 0.6, 0.2 + 3.0, pick(AWNING)); ob(3.0, 0.16, 1.4, 0.7, 0.2 + 0.08, '#9a9690');
+      ob(0.4, 0.3, 0.05, 0.25, 0.2 + 2.6, '#f2f2f2');
+    } else {
+      ob(2.8, 3.1, 0.3, 0.1, 0.2 + 1.55, frame);
+      ob(2.0, 2.6, 0.12, 0.22, 0.2 + 1.3, type === 'shop' ? '#3a5068' : tint);
+      ob(type === 'shop' ? 6 : 3.6, 0.14, 1.5, 0.75, 0.2 + 3.4, pick(AWNING));
+    }
     if (type === 'shop') ob(5.5, 2.2, 0.1, 0.12, 0.2 + 1.7, '#5d7891');
     if (type === 'shop' || type === 'bank' || Math.random() < 0.15) { const ax = fx + nx * 0.35 + tx * 2.4, az = fz + nz * 0.35 + tz * 2.4; chunk.roofs.push(nx ? box(0.5, 1.7, 0.75, ax, 0.2 + 0.85, az, '#2a6a3a') : box(0.75, 1.7, 0.5, ax, 0.2 + 0.85, az, '#2a6a3a')); ATMS.push({ x: ax + nx * 0.7, z: az + nz * 0.7 }); }
     if (type === 'bank' || type === 'hotel') bld.sign = true;
@@ -1596,12 +1623,25 @@ function buildFloor(f) {
     }
   };
   const spot = (type, x, z, yaw, pose, room, extra = {}) => { const s = { type, x, z, yaw, pose, room, occ: null, ...extra }; spots.push(s); return s; };
-  const wallCol = rp(['#e9e6df', '#dfe4e8', '#ece4d6', '#e4e0ea', '#e6ece4', '#d8e2dc', '#efe2d2', '#d6d9e4']);
-  const wallX = (x0, x1, z, gaps = [], col = wallCol, t = 0.16) => { let a = x0; for (const [g0, g1] of [...gaps, [x1, x1]].sort((p, q) => p[0] - q[0])) { if (g0 - a > 0.05) fb(g0 - a, 3.4, t, (a + g0) / 2, 1.7, z, col, true); a = Math.max(a, g1); } };
-  const wallZ = (z0, z1, x, gaps = [], col = wallCol, t = 0.16) => { let a = z0; for (const [g0, g1] of [...gaps, [z1, z1]].sort((p, q) => p[0] - q[0])) { if (g0 - a > 0.05) fb(t, 3.4, g0 - a, x, 1.7, (a + g0) / 2, col, true); a = Math.max(a, g1); } };
+  const TH = THEMES[(b.seed >>> 3) % THEMES.length], wallCol = rp(TH.walls), accent = rp(TH.accent);
+  F.theme = TH.id;
+  // Wandsegment: je nach Stil Glaswand mit Rahmen, Holzvertäfelung oder Akzentfarbe
+  const seg = (alongX, len, mid, c, col, t) => {
+    const W0 = alongX ? len : t, D0 = alongX ? t : len, X0 = alongX ? mid : c, Z0 = alongX ? c : mid;
+    if (TH.glass && col === wallCol && kind === 'office') {
+      fb(W0, 0.1, D0, X0, 0.05, Z0, '#2a2d31'); fb(W0, 0.14, D0, X0, 3.33, Z0, '#2a2d31');
+      for (let q = -len / 2; q <= len / 2 + 0.01; q += 1.5) fb(alongX ? 0.05 : t, 3.3, alongX ? t : 0.05, alongX ? mid + Math.min(q, len / 2) : c, 1.7, alongX ? c : mid + Math.min(q, len / 2), '#2a2d31');
+      const gg = new THREE.PlaneGeometry(len, 3.2); if (!alongX) gg.rotateY(Math.PI / 2); gg.translate(X0, 1.7, Z0); glass.push(gg);
+      fSolid(F, X0 - W0 / 2, X0 + W0 / 2, Z0 - D0 / 2, Z0 + D0 / 2, -0.05, 3.4); return;
+    }
+    fb(W0, 3.4, D0, X0, 1.7, Z0, col === wallCol && TH.accentWalls && r() < 0.3 ? accent : col, true);
+    if (TH.wains && col === wallCol) fb(W0 + 0.02, 1.05, D0 + 0.02, X0, 0.53, Z0, TH.wains);
+  };
+  const wallX = (x0, x1, z, gaps = [], col = wallCol, t = 0.16) => { let a = x0; for (const [g0, g1] of [...gaps, [x1, x1]].sort((p, q) => p[0] - q[0])) { if (g0 - a > 0.05) seg(true, g0 - a, (a + g0) / 2, z, col, t); a = Math.max(a, g1); } };
+  const wallZ = (z0, z1, x, gaps = [], col = wallCol, t = 0.16) => { let a = z0; for (const [g0, g1] of [...gaps, [z1, z1]].sort((p, q) => p[0] - q[0])) { if (g0 - a > 0.05) seg(false, g0 - a, (a + g0) / 2, x, col, t); a = Math.max(a, g1); } };
   const plane = (x0, x1, z0, z1, y, m, tileS) => g.add(holedPlane(x0, x1, z0, z1, y, m, tileS, []));
   // Boden & Decke (mit Schacht- und Treppenöffnungen)
-  const fm = { flat: rp([T.mats.wood, T.mats.wood2, T.mats.tile]), office: rp([T.mats.carpet, T.mats.carpet2, T.mats.wood2]), ward: T.mats.tile, police: T.mats.tile2 }[kind] || rp([T.mats.tile, T.mats.tile2]);
+  const fm = { flat: rp([T.mats.wood, T.mats.wood2, T.mats.tile]), office: T.mats[rp(TH.floor)], lobby: T.mats[rp(TH.lobby)], ward: T.mats.tile, police: T.mats.tile2 }[kind] || rp([T.mats.tile, T.mats.tile2]);
   const core = !small;
   g.add(holedPlane(-hw, hw, -hd, hd, 0.005, fm, 2, core && hole ? [ELEV, H1, H2] : []));
   g.add(holedPlane(-hw, hw, -hd, hd, 3.4, T.mats.ceil, 2, core && !top ? [ELEV, H1, H2] : [], true));
@@ -1668,7 +1708,7 @@ function buildFloor(f) {
     for (const q of rooms) { const [ix, iz] = INWARD[q.side]; q.inPt = [q.door[0] + ix * 0.9, q.door[1] + iz * 0.9]; q.outPt = [q.door[0] - ix * 0.9, q.door[1] - iz * 0.9]; q.win = q.side; }
   }
   // Möbel
-  const deskCol = rp(['#c8b89a', '#e6e6e6', '#6b5040', '#9aa0a6']);
+  const deskCol = rp(TH.desk);
   const desk = (x, z, yaw, room, role = 'desk') => {
     const o = [x, z];
     rb(1.4, 0.05, 0.7, 0, 0.74, 0.55, yaw, ...o, deskCol, true);
@@ -1847,16 +1887,18 @@ function callCab(f) {
   C.target = f;
   if (C.state === 'moving') return;
   if (C.floor === f && Math.abs(C.y - floorY(f)) < 0.01) { if (C.state !== 'open') C.state = 'opening'; C.wait = 8; return; }
-  C.state = 'closing';
+  C.state = 'closing'; C.floor0 = C.floor; C.hold = 0.45;
 }
 function inCab() { const [lx, lz] = toLocal(player.x, player.z); return lx > ELEV[0] && lx < ELEV[1] && lz > ELEV[2] && lz < ELEV[3] && Math.abs(player.y - INT.cab.y) < 1.2; }
 function updateCab(dt) {
   const C = INT.cab, ty = floorY(C.target);
-  if (C.state === 'closing') { C.open = Math.max(0, C.open - dt * 1.3); if (C.open === 0) { C.state = Math.abs(C.y - ty) > 0.01 ? 'moving' : 'opening'; if (C.state === 'moving') sfx.hum(true); } }
+  if (C.state === 'closing') { C.open = Math.max(0, C.open - dt * 1.1); if (C.open === 0 && (C.hold -= dt) <= 0) { C.state = Math.abs(C.y - ty) > 0.01 ? 'moving' : 'opening'; if (C.state === 'moving') sfx.hum(true); } }
   else if (C.state === 'moving') {
-    const d = ty - C.y, sp = Math.min(4.5, Math.sqrt(Math.abs(d) * 2 * 2.2) + 0.15);
-    C.v = lerp(C.v, Math.sign(d) * sp, Math.min(1, dt * 2.5)); const step = C.v * dt;
-    if (Math.abs(step) >= Math.abs(d)) { C.y = ty; C.v = 0; C.floor = C.target; C.state = 'opening'; sfx.hum(false); sfx.ding(); } else C.y += step;
+    // Fahrprofil: sanft anfahren, gleichmäßig fahren, weich abbremsen (begrenzte Beschleunigung)
+    const d = ty - C.y, amax = 1.15, vmax = 3.4, want = Math.sign(d) * Math.min(vmax, Math.sqrt(2 * amax * Math.abs(d)) * 0.95);
+    C.v += clamp(want - C.v, -amax * dt * 1.5, amax * dt * 1.5); let step = C.v * dt;
+    if (Math.abs(d) < 0.004 || (Math.sign(step) === Math.sign(d) && Math.abs(step) >= Math.abs(d))) { C.y = ty; C.v = 0; C.floor = C.target; C.state = 'opening'; C.hold = 0; sfx.hum(false); sfx.ding(); }
+    else { if (Math.sign(step) !== Math.sign(d)) step = Math.sign(d) * 0.002; C.y += step; }
     C.floor = clamp(Math.round((C.y - Y0) / FH), 0, INT.b.floors - 1);
   }
   else if (C.state === 'opening') { C.open = Math.min(1, C.open + dt * 1.3); if (C.open === 1) { C.state = 'open'; C.wait = 8; } }
@@ -1871,16 +1913,21 @@ function updateCab(dt) {
     if (o > 0.85 && F.doorSolid) { removeSolid(F.doorSolid); F.solids.splice(F.solids.indexOf(F.doorSolid), 1); F.doorSolid = null; }
     else if (o < 0.6 && !F.doorSolid) F.doorSolid = fSolid(F, -2.6, -1.2, -3.12, -2.98, -0.05, 3.0);
   }
-  if (riding) { player.y = C.y; player.vy = 0; player.grounded = true; }
+  if (riding) { player.y = C.y; player.vy = 0; player.grounded = true; player.h.group.position.y = C.y; }
+  // Stockwerksanzeige während der Fahrt
+  const hud = $('lifthud'), showH = riding && C.state !== 'open';
+  if (showH) { const lab = `${C.state === 'moving' ? (C.v > 0 ? '▲' : '▼') : '•'} ${liftLab(C.floor)}`; if (hud.dataset.t !== lab) { hud.dataset.t = lab; hud.innerHTML = `<span>${lab}</span><small>${floorName(INT.b, C.target)}</small>`; } }
+  if ((hud.style.display === 'block') !== showH) hud.style.display = showH ? 'block' : 'none';
 }
 // ---------- Etagen laden/entladen, Gebäude aktivieren ----------
 const curFloorOf = y => clamp(Math.floor((y - Y0 + 0.6) / FH), 0, INT.b.floors - 1);
 function syncFloors() {
-  const fc = INT.inside ? curFloorOf(player.y) : 0; INT.fc = fc;
-  const want = new Set([fc - 1, fc, fc + 1].filter(f => f >= 0 && f < (INT.b.small ? 1 : INT.b.floors)));
-  if (INT.cab && INT.cab.state === 'moving') want.add(INT.cab.floor);
+  const C = INT.cab, ride = C && !player.car && inCab() && (C.state === 'moving' || C.state === 'closing');
+  const fc = ride ? C.target : INT.inside ? curFloorOf(player.y) : 0; INT.fc = fc;
+  const ok = f => f >= 0 && f < (INT.b.small ? 1 : INT.b.floors);
+  const want = new Set((ride ? [C.floor0 ?? C.floor, C.target, C.target - 1, C.target + 1] : [fc - 1, fc, fc + 1]).filter(ok));
   for (const [f, F] of [...INT.floors]) if (!want.has(f)) unloadFloor(F);
-  for (const f of want) if (!INT.floors.has(f)) INT.floors.set(f, buildFloor(f));
+  for (const f of [fc, ...want]) if (!INT.floors.has(f)) { INT.floors.set(f, buildFloor(f)); if (ride) break; }
   INT.kind = INT.floors.get(fc)?.kind || '';
   const W = INT.W, D = INT.D;
   INT.lights.forEach((l, i) => { const [x, z] = toWorld((i % 2 ? 1 : -1) * W / 4, (i < 2 ? -1 : 1) * D / 4); l.position.set(x, floorY(fc) + 3.0, z); });
@@ -1918,11 +1965,11 @@ function updateBuildings(dt) {
   }
   if (INT.checkT <= 0) {
     INT.checkT = 0.25;
-    if (!INT.active) { if (!player.car && !player.dead) { const b = nearestDoor(player.x, player.z, 14); if (b) activateBuilding(b); } }
+    if (!INT.active) { if (!player.car && !player.dead) { const b = nearestDoor(player.x, player.z, 32); if (b) activateBuilding(b); } }
     else if (!INT.inside) {
       const d = INT.b.door, dd = Math.hypot(d.x - player.x, d.z - player.z);
-      const nb = !player.car && nearestDoor(player.x, player.z, 10);
-      if (dd > 26 || player.car || (nb && nb !== INT.b && dd > 12)) deactivateBuilding();
+      const nb = !player.car && nearestDoor(player.x, player.z, 32);
+      if (dd > 44 || player.car || (nb && nb !== INT.b && Math.hypot(nb.door.x - player.x, nb.door.z - player.z) < dd - 9)) deactivateBuilding();
     }
     if (INT.active) syncFloors();
   }
@@ -1958,7 +2005,7 @@ function iChoose(n) {
   const leave = () => { iGo(n, INT.b.small || F.f === 0 ? exitSpotOf(F) : F.elevSpot, 0); n.leaving = true; };
   switch (n.role) {
     case 'worker': {
-      if (n.at !== n.home) { if (!n.home.occ || n.home.occ === n) return iGo(n, n.home, rnd(25, 70)); return leave(); }
+      if (n.at !== n.home) { if (!n.home.occ || n.home.occ === n) return iGo(n, n.home, rnd(14, 40)); return leave(); }
       if (Math.random() < 0.1 && !INT.b.small) return leave();
       const t = pick([...free('cooler'), ...free('cook'), ...free('meet'), ...free('window'), ...free('table')]); if (t) return iGo(n, t, rnd(8, 22));
       n.wait = rnd(10, 30); return;
@@ -2053,16 +2100,21 @@ function intGround(x, z, y) {
 const floorH = (x, z, y = 0.2) => { if (INT.active) { const [lx, lz] = toLocal(x, z); if (Math.abs(lx) < INT.W / 2 && Math.abs(lz) < INT.D / 2) return intGround(x, z, y); } return groundH(x, z); };
 function nearElevCall() { const [lx, lz] = toLocal(player.x, player.z); return !INT.b.small && Math.hypot(lx + 1.9, lz + 3.7) < 1.4; }
 function openElevator() { INT.menu = true; INT.sel = curFloorOf(player.y); renderElevator(); $('elev').style.display = 'block'; sfx.ding(); }
+const liftLab = f => f === 0 ? 'E' : String(f);
 function renderElevator() {
-  const b = INT.b, n = b.floors, lo = clamp(INT.sel - 5, 0, Math.max(0, n - 11)), hi = Math.min(n, lo + 11), cf = INT.cab.floor;
-  let html = '<div class="et">AUFZUG</div>';
-  for (let f = hi - 1; f >= lo; f--) html += `<div class="ef${f === INT.sel ? ' sel' : ''}${f === cf ? ' cur' : ''}">${floorName(b, f)}</div>`;
-  $('elev').innerHTML = html + '<div class="eh">W/S wählen · E fahren · F abbrechen</div>';
+  const b = INT.b, n = b.floors, cf = INT.cab.floor, cols = n > 18 ? 5 : n > 9 ? 4 : 3, btn = [];
+  for (let f = n - 1; f >= 0; f--) btn.push(`<i class="${f === INT.sel ? 'sel' : ''}${f === INT.pressed ? ' lit' : ''}${f === cf ? ' here' : ''}">${liftLab(f)}</i>`);
+  $('elev').innerHTML = `<div class="lift"><div class="disp"><span>${INT.cab.state === 'moving' ? (INT.cab.v > 0 ? '▲' : '▼') : '•'}</span><b>${liftLab(cf)}</b></div><div class="lname">${floorName(b, INT.sel)}</div><div class="btns" style="grid-template-columns:repeat(${cols},1fr)">${btn.join('')}</div><div class="eh">W/S/A/D wählen · E drücken · F schließen</div></div>`;
 }
 function elevatorKey(code) {
-  if (code === 'KeyW' || code === 'ArrowUp') { INT.sel = Math.min(INT.b.floors - 1, INT.sel + 1); renderElevator(); }
-  else if (code === 'KeyS' || code === 'ArrowDown') { INT.sel = Math.max(0, INT.sel - 1); renderElevator(); }
-  else if (code === 'KeyE' || code === 'Enter') { INT.menu = null; $('elev').style.display = 'none'; callCab(INT.sel); notice('Fahre zu: ' + floorName(INT.b, INT.sel), 2000); }
+  if (INT.pressed != null) return;
+  if (code === 'KeyW' || code === 'ArrowUp' || code === 'KeyD' || code === 'ArrowRight') { INT.sel = Math.min(INT.b.floors - 1, INT.sel + 1); sfx.click(); renderElevator(); }
+  else if (code === 'KeyS' || code === 'ArrowDown' || code === 'KeyA' || code === 'ArrowLeft') { INT.sel = Math.max(0, INT.sel - 1); sfx.click(); renderElevator(); }
+  else if (code === 'KeyE' || code === 'Enter') {
+    // Taste leuchtet auf, kurzer Piepton, dann schließen die Türen
+    INT.pressed = INT.sel; sfx.liftBeep(); renderElevator();
+    const b0 = INT.b; setTimeout(() => { if (INT.b !== b0 || !INT.cab) { INT.pressed = null; return; } INT.menu = null; $('elev').style.display = 'none'; callCab(INT.pressed); INT.pressed = null; }, 650);
+  }
   else if (code === 'KeyF' || code === 'Backspace') { INT.menu = null; $('elev').style.display = 'none'; }
 }
 function nearestINpc(r) { let best = null, bd = r; for (const n of INT.npcs) { if (n.state === 'dead' || Math.abs(n.wy - player.y) > 1.5) continue; const d = Math.hypot(n.wx - player.x, n.wz - player.z); if (d < bd) { bd = d; best = n; } } return best; }
@@ -3358,6 +3410,7 @@ const sfx = (() => {
     hum(on) { if (!ac) return; if (on && !this._hum) { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'sawtooth'; o.frequency.value = 55; const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 180; g.gain.value = 0.05; o.connect(f).connect(g).connect(master); o.start(); this._hum = o; } else if (!on && this._hum) { this._hum.stop(); this._hum = null; } },
     click() { tone(1800, 0.04, 0.05, 'square'); },
     ring() { for (let i = 0; i < 2; i++) { tone(440, 0.4, 0.07, 'sine', i * 1.1); tone(480, 0.4, 0.07, 'sine', i * 1.1); } },
+    liftBeep() { tone(880, 0.12, 0.1, 'sine'); tone(1320, 0.18, 0.08, 'sine', 0.1); },
     ding() { tone(1318, 0.6, 0.12, 'sine'); tone(1046, 0.8, 0.1, 'sine', 0.18); },
     save() { [392, 494, 587].forEach((f, i) => tone(f, 0.6, 0.1, 'triangle', i * 0.15)); },
     radio() {
@@ -3822,7 +3875,7 @@ function updateCamera(dt) {
     const sx = -Math.cos(camYaw) * (aim ? 0.75 : 0.45), sz = Math.sin(camYaw) * (aim ? 0.75 : 0.45);
     tx = player.x + sx; ty = player.y + 1.65; tz = player.z + sz; dist = aim ? 2.6 : 4.4;
     if (player.dead) { dist = 6; camPitch = lerp(camPitch, 0.9, dt * 0.5); }
-    if (INT.inside) { dist = Math.min(dist, 2.9); camPitch = Math.min(camPitch, 0.55); }
+    if (INT.inside) { dist = Math.min(dist, 2.9); camPitch = Math.min(camPitch, 0.55); if (INT.cab && inCab()) { dist = Math.min(dist, 1.7); camPitch = clamp(camPitch, 0.05, 0.45); } }
     camera.fov = lerp(camera.fov, aim ? 55 : 68, dt * 6);
   }
   camera.updateProjectionMatrix();
@@ -3833,6 +3886,10 @@ function updateCamera(dt) {
   for (let s = 0.3; s <= camDist; s += 0.2) if (solidAt(tx + dx * s, ty + dy * s, tz + dz * s)) { d = Math.max(0.6, s - 0.4); break; }
   camera.position.set(tx + dx * d, Math.max(ty + dy * d, INT.inside ? player.y + 0.3 : 0.4), tz + dz * d);
   if (INT.inside) camera.position.y = Math.min(camera.position.y, Math.max(floorY(curFloorOf(player.y)) + 3.15, player.y + 1.9));
+  if (INT.active && INT.cab && !player.car && inCab()) {
+    let [clx, clz] = toLocal(camera.position.x, camera.position.z); clx = clamp(clx, ELEV[0] + 0.12, ELEV[1] - 0.12); clz = clamp(clz, ELEV[2] + 0.12, ELEV[3] - 0.12);
+    const [cwx, cwz] = toWorld(clx, clz); camera.position.x = cwx; camera.position.z = cwz; camera.position.y = clamp(camera.position.y, INT.cab.y + 0.6, INT.cab.y + 2.45);
+  }
   if (shake > 0) { camera.position.x += rnd(-1, 1) * shake * 0.4; camera.position.y += rnd(-1, 1) * shake * 0.4; shake = Math.max(0, shake - dt * 1.8); }
   camera.lookAt(tx, ty + 0.2, tz);
   skyDome.position.copy(camera.position);
@@ -4164,7 +4221,7 @@ async function boot() {
   for (let i = 0; i < 18; i++) spawnParked(15, 230);
   for (let i = 0; i < 50; i++) spawnPed(6, 130);
   worldReady = true;
-  window.__game = { player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get phone() { return phone; } };
+  window.__game = { player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get phone() { return phone; } };
   progress(0.9, CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase() + ' wird geweckt …'); await nextFrame();
   progress(0.95, 'Shader werden kompiliert …'); await nextFrame();
   updateCamera(0.016);

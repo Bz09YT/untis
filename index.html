@@ -63,6 +63,18 @@
   #elev .ef { padding: .5vmin 1vmin; color: #cfd6dd; }
   #elev .ef.cur { color: #7fd36f; }
   #elev .ef.sel { background: #ffd23a; color: #111; font-weight: 700; }
+  #elev .lift { width: 26vmin; }
+  #elev .disp { display: flex; align-items: center; justify-content: center; gap: 1.4vmin; background: #050607; border: .3vmin solid #3a3f45; border-radius: 1vmin; padding: .8vmin; margin-bottom: 1vmin; font-family: 'Courier New', monospace; color: #ff9a2a; text-shadow: 0 0 1vmin #ff7a00; }
+  #elev .disp b { font-size: 5vmin; } #elev .disp span { font-size: 3vmin; }
+  #elev .lname { text-align: center; color: #cfd6dd; font-size: 1.6vmin; margin-bottom: 1.2vmin; min-height: 2vmin; }
+  #elev .btns { display: grid; gap: 1vmin; padding: 1.2vmin; border-radius: 1.2vmin; background: linear-gradient(135deg, #9aa1a8, #5d636a); box-shadow: inset 0 .3vmin .6vmin rgba(255,255,255,.35); }
+  #elev .btns i { font-style: normal; display: flex; align-items: center; justify-content: center; aspect-ratio: 1; border-radius: 50%; font-weight: 700; font-size: 1.9vmin; color: #1a1c1f; background: radial-gradient(circle at 35% 30%, #f2f4f6, #b9bec4 70%); border: .3vmin solid #6a7077; box-shadow: 0 .3vmin .4vmin rgba(0,0,0,.45); transition: transform .12s, box-shadow .2s, background .2s; }
+  #elev .btns i.here { color: #2a7a2a; }
+  #elev .btns i.sel { outline: .35vmin solid #ffd23a; outline-offset: .2vmin; }
+  #elev .btns i.lit { transform: scale(.88); color: #fff; background: radial-gradient(circle at 40% 35%, #fff6d0, #ffb020 60%, #c06a00); box-shadow: 0 0 2.4vmin #ffb020, inset 0 .3vmin .5vmin rgba(0,0,0,.35); animation: litpulse .65s ease-out; }
+  @keyframes litpulse { 0% { transform: scale(.8); } 40% { transform: scale(.92); } 100% { transform: scale(.88); } }
+  #lifthud { position: absolute; left: 50%; top: 14vmin; transform: translateX(-50%); display: none; text-align: center; background: rgba(5,6,7,.82); border: .3vmin solid #3a3f45; border-radius: 1.2vmin; padding: 1vmin 3vmin; font-family: 'Courier New', monospace; color: #ff9a2a; text-shadow: 0 0 1vmin #ff7a00; }
+  #lifthud span { display: block; font-size: 5vmin; font-weight: 700; } #lifthud small { display: block; color: #cfd6dd; text-shadow: none; font-family: Arial, sans-serif; font-size: 1.6vmin; }
   #elev .eh { margin-top: 1vmin; font-size: 1.6vmin; color: #9aa3ad; }
   #wheel { position: fixed; inset: 0; display: none; background: radial-gradient(circle at 50% 50%, rgba(0,0,0,.55) 0, rgba(0,0,0,.25) 50vmin, transparent 70vmin); z-index: 15; }
   #wheel .ws { position: absolute; width: 17vmin; height: 12vmin; margin: -6vmin 0 0 -8.5vmin; background: rgba(20,22,26,.8); border: .3vmin solid rgba(255,255,255,.2); border-radius: 1.2vmin; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .4vmin; }
@@ -111,6 +123,7 @@
   </div>
   <div id="notice"></div>
   <div id="fare"></div>
+  <div id="lifthud"></div>
   <div id="who">FRANKLIN</div>
   <div id="mapwrap"><canvas id="minimap" width="520" height="400"></canvas></div>
   <div id="healthwrap"><div class="bar" id="ar"><i></i></div><div class="bar" id="hp"><i></i></div></div>
