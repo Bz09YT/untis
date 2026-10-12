@@ -2805,6 +2805,87 @@ function holedPlane(x0, x1, z0, z1, y, mat, tileS, holes, down = false) {
   }
   const m = new THREE.Mesh(mergeGeometries(geos), mat); m.receiveShadow = true; return m;
 }
+// ---------- Raumtüren + Eingangstüren: ein InstancedMesh pro Typ, Matrizen nur bei Bewegung ----------
+const _dm = new THREE.Object3D(); let DOORG = null;
+const dEase = u => u * u * (3 - 2 * u);
+function doorGeo() {
+  if (DOORG) return DOORG;
+  const bx = (w, h, d, x, y, z, c) => colorize(new THREE.BoxGeometry(w, h, d).translate(x, y, z), c), mg = l => mergeGeometries(l);
+  const leaf = [bx(1.2, 2.1, 0.045, 0.6, 1.05, 0, '#ffffff')]; for (const y of [0.6, 1.55]) leaf.push(bx(0.8, 0.8, 0.052, 0.6, y, 0, '#d8d8d8'));
+  const hnd = []; for (const s of [1, -1]) { hnd.push(new THREE.BoxGeometry(0.13, 0.026, 0.026).translate(1.0, 1.0, s * 0.07), new THREE.BoxGeometry(0.05, 0.05, 0.014).translate(1.07, 1.0, s * 0.03)); }
+  const fr = [bx(1.18, 0.08, 0.06, 0, 1.185, 0, '#3a3f45'), bx(1.18, 0.08, 0.06, 0, -1.185, 0, '#3a3f45'), bx(0.06, 2.45, 0.06, -0.56, 0, 0, '#3a3f45'), bx(0.06, 2.45, 0.06, 0.56, 0, 0, '#3a3f45'), bx(0.03, 0.9, 0.03, 0.46, 0, 0.06, '#b8bec4'), bx(0.03, 0.9, 0.03, 0.46, 0, -0.06, '#b8bec4')];
+  DOORG = { leaf: mg(leaf), hnd: mg(hnd), eFrame: mg(fr), ePane: new THREE.PlaneGeometry(1.08, 2.36),
+    mLeaf: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55 }), mHnd: new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 0.85, roughness: 0.3 }), mFrame: new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.5, roughness: 0.45 }) };
+  return DOORG;
+}
+// Raumtüren: defs = [{cx,cz,tx,tz,nx,nz,hs,col}] (lokal); hs = Scharnierseite entlang t, n = Blick ins Zimmer
+function mkRoomDoors(F, g, defs, plates) {
+  if (!defs.length) return;
+  const G = doorGeo(), n = defs.length, leaf = new THREE.InstancedMesh(G.leaf, G.mLeaf, n), hnd = new THREE.InstancedMesh(G.hnd, G.mHnd, n), c = new THREE.Color();
+  leaf.frustumCulled = hnd.frustumCulled = false;
+  F.rd = { list: defs, leaf, hnd };
+  defs.forEach((d, i) => {
+    d.i = i; d.u = 0; d.tgt = 0; d.idle = 0; d.sgn = 1; d.hx = d.cx - d.hs * 0.6 * d.tx; d.hz = d.cz - d.hs * 0.6 * d.tz;
+    const al = d.tx === 1; d.so = fSolid(F, d.cx - (al ? 0.65 : 0.1), d.cx + (al ? 0.65 : 0.1), d.cz - (al ? 0.1 : 0.65), d.cz + (al ? 0.1 : 0.65), -0.05, 2.2);
+    leaf.setColorAt(i, c.set(d.col)); setRoomDoorM(F.rd, d);
+  });
+  g.add(leaf, hnd);
+  if (plates) { // Zimmernummern (Hotel): ein Atlas, ein Mesh
+    const cv = document.createElement('canvas'); cv.width = 128; cv.height = 48 * n; const x = cv.getContext('2d'); x.textAlign = 'center'; x.textBaseline = 'middle'; x.font = 'bold 34px Georgia';
+    const geos = defs.map((d, i) => {
+      x.fillStyle = '#6b5326'; x.fillRect(0, i * 48, 128, 48); x.fillStyle = '#e8c878'; x.fillRect(4, i * 48 + 4, 120, 40); x.fillStyle = '#2a1a10'; x.fillText(String(F.f * 100 + i + 1), 64, i * 48 + 25);
+      const pg = new THREE.PlaneGeometry(0.2, 0.075), uv = pg.attributes.uv; for (let k = 0; k < uv.count; k++) uv.setY(k, 1 - (i + 1) / n + uv.getY(k) / n);
+      pg.rotateY(Math.atan2(-d.nx, -d.nz)); pg.translate(d.cx - d.nx * 0.09 + d.tx * 0.95, 1.6, d.cz - d.nz * 0.09 + d.tz * 0.95); return pg;
+    });
+    F.rd.tex = new THREE.CanvasTexture(cv); F.rd.tex.colorSpace = THREE.SRGBColorSpace; g.add(new THREE.Mesh(mergeGeometries(geos), new THREE.MeshBasicMaterial({ map: F.rd.tex })));
+  }
+}
+function setRoomDoorM(R, d) {
+  const a = dEase(d.u) * 1.52, s = Math.sin(a), c = Math.cos(a), dx = d.hs * d.tx * c + d.sgn * d.nx * s, dz = d.hs * d.tz * c + d.sgn * d.nz * s;
+  _dm.position.set(d.hx, 0, d.hz); _dm.rotation.set(0, Math.atan2(-dz, dx), 0); _dm.updateMatrix();
+  R.leaf.setMatrixAt(d.i, _dm.matrix); R.hnd.setMatrixAt(d.i, _dm.matrix); R.leaf.instanceMatrix.needsUpdate = R.hnd.instanceMatrix.needsUpdate = true;
+}
+// Eingang (EG): Schiebe-Glastür (mode 'slide') bzw. Flügeltür (mode 'swing', Wohnhäuser), Lücke x = ±1.3 in der Außenwand bei z = -hd
+function mkEntrance(F, g, hd, fb, mode) {
+  const G = doorGeo(), z0 = -hd, fr = new THREE.InstancedMesh(G.eFrame, G.mFrame, 2), gl = new THREE.InstancedMesh(G.ePane, interiorTextures().mats.glass, 2);
+  fr.frustumCulled = gl.frustumCulled = false;
+  fb(0.12, 2.6, 0.3, -1.24, 1.3, z0, '#3a3f45'); fb(0.12, 2.6, 0.3, 1.24, 1.3, z0, '#3a3f45'); fb(2.6, 0.1, 0.3, 0, 2.55, z0, '#3a3f45');
+  F.ent = { mode, z0, u: 0, tgt: 0, idle: 0, sgn: 1, fr, gl, so: fSolid(F, -1.3, 1.3, z0 - 0.15, z0 + 0.15, -0.05, 2.5) };
+  setEntM(F.ent); g.add(fr, gl);
+}
+function setEntM(E) {
+  const k = dEase(E.u);
+  for (let i = 0; i < 2; i++) {
+    const s = i ? 1 : -1; // links / rechts
+    if (E.mode === 'slide') { _dm.position.set(s * (0.59 + 1.1 * k), 1.255, E.z0 + s * 0.08); _dm.rotation.set(0, 0, 0); }
+    else { const a = k * 1.52, dx = -s * Math.cos(a), dz = E.sgn * Math.sin(a); _dm.position.set(s * 1.18 + dx * 0.59, 1.255, E.z0 + dz * 0.59); _dm.rotation.set(0, Math.atan2(-dz, dx), 0); }
+    _dm.updateMatrix(); E.fr.setMatrixAt(i, _dm.matrix); E.gl.setMatrixAt(i, _dm.matrix);
+  }
+  E.fr.instanceMatrix.needsUpdate = E.gl.instanceMatrix.needsUpdate = true;
+}
+// pro Frame: Türen öffnen, wenn Spieler/laufende NPC im Bereich stehen; Schwenkrichtung weg von der Person; Kollision nur solange (fast) geschlossen
+function updateDoors(F, dt, plx, plz) {
+  const pOn = !player.car && !player.dead && Math.abs(player.y - floorY(F.f)) < 1.6;
+  const step = (D, who, tm) => {
+    if (who) { D.idle = 2.5; if (D.u < 0.05) D.sgn = who; D.tgt = 1; } else { D.idle -= dt; if (D.idle <= 0) D.tgt = 0; }
+    const u0 = D.u; D.u = D.tgt > D.u ? Math.min(D.tgt, D.u + dt / tm) : Math.max(D.tgt, D.u - dt / tm); return D.u !== u0;
+  };
+  const solid = (D, x0, x1, z0, z1, h) => { const a = dEase(D.u) * 1.52; if (a > 0.45 && D.so) { removeSolid(D.so); const k = F.solids.indexOf(D.so); if (k >= 0) F.solids.splice(k, 1); D.so = null; } else if (a < 0.25 && !D.so) D.so = fSolid(F, x0, x1, z0, z1, -0.05, h); };
+  if (F.rd) for (const d of F.rd.list) {
+    let who = 0; const chk = (x, z, zd) => { const rx = x - d.cx, rz = z - d.cz, u = rx * d.nx + rz * d.nz, w = rx * d.tx + rz * d.tz; if (Math.abs(w) < 0.8 && Math.abs(u) < zd) who = u < 0 ? 1 : -1; };
+    if (pOn) chk(plx, plz, 1.8);
+    for (const n of F.npcs) if (n.state !== 'dead' && (n.state === 'walk' || n.role === 'cop')) chk(n.x, n.z, n.flee ? 2.6 : 1.7);
+    if (step(d, who, 0.4)) setRoomDoorM(F.rd, d);
+    const al = d.tx === 1; solid(d, d.cx - (al ? 0.65 : 0.1), d.cx + (al ? 0.65 : 0.1), d.cz - (al ? 0.1 : 0.65), d.cz + (al ? 0.1 : 0.65), 2.2);
+  }
+  const E = F.ent; if (E) {
+    let who = 0; const chk = (x, z, zo) => { if (Math.abs(x) < 1.9 && z > E.z0 - zo && z < E.z0 + 2.4) who = z < E.z0 ? 1 : -1; };
+    if (pOn) chk(plx, plz, 3.0);
+    for (const n of F.npcs) if (n.state !== 'dead' && n.state === 'walk') chk(n.x, n.z, 2.4);
+    if (step(E, who, 0.45)) setEntM(E);
+    solid(E, -1.3, 1.3, E.z0 - 0.15, E.z0 + 0.15, 2.5);
+  }
+}
 function buildFloor(f) {
   const b = INT.b, F = { f, group: new THREE.Group(), solids: [], npcs: [], spots: [], rooms: [], kind: '', respawnT: rnd(8, 20), doors: [], doorSolid: null };
   F.group.position.y = floorY(f); INT.root.add(F.group);
@@ -2864,7 +2945,7 @@ function buildFloor(f) {
     }
   };
   extWall('x', -hd, -hw, hw, f === 0 ? [[-1.3, 1.3]] : []); extWall('x', hd, -hw, hw, []); extWall('z', -hw, -hd, hd, []); extWall('z', hw, -hd, hd, []);
-  if (f === 0) { fb(2.6, 0.75, 0.3, 0, 2.97, -hd, ext); F.exit = { x: 0, z: -hd + 0.9 }; }
+  if (f === 0) { fb(2.6, 0.75, 0.3, 0, 2.97, -hd, ext); F.exit = { x: 0, z: -hd + 0.9 }; mkEntrance(F, g, hd, fb, b.type === 'apartment' ? 'swing' : 'slide'); }
   // Kern: Aufzug + Treppenhaus mit Zwischenpodest
   const coreCol = rp(['#b9c2c9', '#c9bfb2', '#a9b4a8', '#c4c0cc', '#d0c8b8']);
   if (core) {
@@ -2910,6 +2991,14 @@ function buildFloor(f) {
     wallX(-hw, hw, -5.4, gaps('S')); wallX(-hw, hw, 5.4, gaps('N')); wallZ(-5.4, 5.4, -5.6, gaps('W')); wallZ(-5.4, 5.4, 5.6, gaps('E'));
     const INWARD = { S: [0, -1], N: [0, 1], W: [-1, 0], E: [1, 0] };
     for (const q of rooms) { const [ix, iz] = INWARD[q.side]; q.inPt = [q.door[0] + ix * 0.9, q.door[1] + iz * 0.9]; q.outPt = [q.door[0] - ix * 0.9, q.door[1] - iz * 0.9]; q.win = q.side; }
+    // Türzargen + Sturz (Blätter: mkRoomDoors, schwenken automatisch)
+    const hot = b.type === 'hotel', dcol = hot ? '#4a2f1f' : b.type === 'prison' ? '#6f757b' : b.type === 'hospital' ? '#dfe8ea' : kind === 'office' ? (TH.glass ? '#303840' : '#a7794c') : ['#e9e4d8', '#d6c9ae', '#9fb4ae', '#c9b6a0'][(b.seed + f) % 4], zcol = hot ? '#2e1d12' : kind === 'office' && !TH.glass ? '#7a5434' : '#f0ede6', rdefs = [];
+    rooms.forEach((q, i) => {
+      const al = q.side === 'S' || q.side === 'N', [nx, nz] = INWARD[q.side], [cx, cz] = q.door, P = (len, h, th, o, y, col = zcol) => al ? fb(len, h, th, cx + o, y, cz, col) : fb(th, h, len, cx, y, cz + o, col);
+      P(0.07, 2.12, 0.22, -0.665, 1.06); P(0.07, 2.12, 0.22, 0.665, 1.06); P(1.4, 0.07, 0.22, 0, 2.155); P(1.3, 1.21, 0.16, 0, 2.795, wallCol);
+      rdefs.push({ cx, cz, tx: al ? 1 : 0, tz: al ? 0 : 1, nx, nz, hs: ((b.seed >>> 2) + f + i) & 1 ? 1 : -1, col: dcol });
+    });
+    F.rdefs = rdefs; F.rdPlates = hot;
   }
   // Möbel
   const deskCol = rp(TH.desk);
@@ -2983,6 +3072,139 @@ function buildFloor(f) {
     rooms.forEach((q, k) => furnishRoom(q, kind === 'flat' ? 'flat' : kind === 'ward' ? 'ward' : k === 1 ? 'kitchen' : k === 4 ? 'meeting' : rp(types)));
   } else {
     const all = { open: true };
+    // Hallen-Baukasten (Hotel/Lobby/Bank/Polizei): Sperrflächen + Möbelgruppen skalieren mit der Grundfläche, alles in vc/pan gemerged (wenige Draw-Calls)
+    const hk = (() => {
+      const res = core ? [[-4.2, 4.2, -4.2, 4.2]] : [], keep = [[-2.2, 2.2, -hd, -4.2]], pts = [], AR = 4 * hw * hd;
+      const okAt = (x, z, rx, rz = rx) => Math.abs(x) + rx < hw - 0.3 && Math.abs(z) + rz < hd - 0.3 && ![...res, ...keep].some(q => x + rx > q[0] && x - rx < q[1] && z + rz > q[2] && z - rz < q[3]);
+      const claim = (x, z, rx, rz = rx, pt = true) => { res.push([x - rx, x + rx, z - rz, z + rz]); if (pt) pts.push([x, z]); };
+      const dist = (x, z) => { let m = 99; for (const q of res) m = Math.min(m, Math.hypot(Math.max(q[0] - x, 0, x - q[1]), Math.max(q[2] - z, 0, z - q[3]))); return m; };
+      const P = (yaw, ox, oz, lx, lz) => [ox + lx * Math.cos(yaw) + lz * Math.sin(yaw), oz - lx * Math.sin(yaw) + lz * Math.cos(yaw)];
+      const dim = (c, k) => '#' + new THREE.Color(c).multiplyScalar(k).getHexString();
+      const sol = (x, z, w, d, yaw, h = 1.0) => { const sw = Math.abs(Math.sin(yaw)) > 0.5, ww = sw ? d : w, dd = sw ? w : d; fSolid(F, x - ww / 2, x + ww / 2, z - dd / 2, z + dd / 2, -0.05, h); };
+      const cyl = (rt, rb2, h, x, y, z, col, list = vc, seg = 10) => list.push(colorize(new THREE.CylinderGeometry(rt, rb2, h, seg).translate(x, y, z), col));
+      const PAL = [['#7a2a2a', '#c8a45a'], ['#2f3a4a', '#9aa7b8'], ['#3b5a48', '#d8caa0'], ['#5a4030', '#b0803c'], ['#33403f', '#c7b7a0'], ['#4a3a5a', '#d0c0a0']];
+      const rug = (x, z, w, d, yaw, c1, c2) => { rb(w, 0.02, d, 0, 0.01, 0, yaw, x, z, c2); rb(w - 0.36, 0.03, d - 0.36, 0, 0.015, 0, yaw, x, z, c1); rb(w - 0.8, 0.04, d - 0.8, 0, 0.02, 0, yaw, x, z, dim(c1, 1.12)); };
+      const couch = (x, z, yaw, col, len = 2.2) => {
+        rb(len, 0.42, 0.92, 0, 0.27, 0, yaw, x, z, dim(col, 0.8)); rb(len, 0.6, 0.24, 0, 0.72, -0.34, yaw, x, z, col);
+        for (const s of [-1, 1]) rb(0.24, 0.34, 0.92, s * (len / 2 - 0.12), 0.59, 0, yaw, x, z, dim(col, 0.9));
+        const n = len > 1.5 ? 2 : 1, cw = (len - 0.5) / n;
+        for (let k = 0; k < n; k++) rb(cw - 0.03, 0.16, 0.66, -(len - 0.5) / 2 + cw * (k + 0.5), 0.54, 0.08, yaw, x, z, dim(col, 1.12));
+        sol(x, z, len, 0.92, yaw, 0.9);
+      };
+      const sit = (x, z, yaw, lx = 0) => { const [sx, sz] = P(yaw, x, z, lx, 0.08); return spot('visit', sx, sz, yaw, 'sit', all); };
+      const table = (x, z, yaw, w, d, col) => { rb(w, 0.05, d, 0, 0.42, 0, yaw, x, z, col); rb(w - 0.2, 0.34, d - 0.2, 0, 0.2, 0, yaw, x, z, dim(col, 0.6)); sol(x, z, w, d, yaw, 0.5); };
+      const lamp = (x, z) => { cyl(0.2, 0.2, 0.03, x, 0.015, z, '#2a2a2a'); cyl(0.02, 0.02, 1.45, x, 0.75, z, '#d8b060', vc, 6); cyl(0.2, 0.28, 0.36, x, 1.65, z, '#fff', pan, 12); };
+      const bush = (x, z, s = 1) => {
+        cyl(0.3 * s, 0.22 * s, 0.55 * s, x, 0.275 * s, z, rp(['#8a7260', '#4a4f55', '#a0866a'])); cyl(0.03, 0.04, 0.5 * s, x, 0.75 * s, z, '#5a4630', vc, 5);
+        for (let k = 0; k < 4; k++) vc.push(colorize(new THREE.IcosahedronGeometry((0.4 - k * 0.05) * s, 1).translate(x + rr(-0.18, 0.18) * s, (0.95 + k * 0.3) * s, z + rr(-0.18, 0.18) * s), rp(['#2f6b34', '#3c7a3a', '#2a5c33', '#4a8a40'])));
+        fSolid(F, x - 0.32 * s, x + 0.32 * s, z - 0.32 * s, z + 0.32 * s, -0.05, 1.5 * s);
+      };
+      const pillar = (x, z, col) => { cyl(0.36, 0.38, 3.2, x, 1.7, z, col, vc, 16); fb(0.9, 0.2, 0.9, x, 0.1, z, dim(col, 0.8)); fb(0.9, 0.2, 0.9, x, 3.3, z, dim(col, 0.8)); fb(0.76, 0.08, 0.76, x, 0.24, z, dim(col, 0.9)); iSolid(x - 0.45, x + 0.45, z - 0.45, z + 0.45); };
+      const pend = (x, z, y = 2.65, s = 0.22) => { pan.push(colorize(new THREE.SphereGeometry(s, 10, 8).translate(x, y, z), '#fff')); cyl(0.008, 0.008, 3.4 - y, x, (3.4 + y) / 2, z, '#222', vc, 4); };
+      const chandelier = (x, z) => { vc.push(colorize(new THREE.TorusGeometry(0.7, 0.025, 6, 22).rotateX(Math.PI / 2).translate(x, 2.7, z), '#b8964a')); cyl(0.01, 0.01, 0.7, x, 3.05, z, '#b8964a', vc, 4); for (let k = 0; k < 8; k++) pan.push(colorize(new THREE.SphereGeometry(0.1, 8, 6).translate(x + Math.cos(k * 0.785) * 0.7, 2.72, z + Math.sin(k * 0.785) * 0.7), '#fff')); pan.push(colorize(new THREE.SphereGeometry(0.2, 10, 8).translate(x, 2.7, z), '#fff')); };
+      const bench = (x, z, yaw, len, col) => { rb(len, 0.1, 0.5, 0, 0.45, 0, yaw, x, z, col); rb(0.08, 0.42, 0.42, -len / 2 + 0.2, 0.21, 0, yaw, x, z, '#2a2a2a'); rb(0.08, 0.42, 0.42, len / 2 - 0.2, 0.21, 0, yaw, x, z, '#2a2a2a'); sol(x, z, len, 0.5, yaw, 0.6); };
+      const art = (x, y, z, yaw, w, h) => { rb(w + 0.1, h + 0.1, 0.05, 0, y, 0, yaw, x, z, '#1d1d20'); rb(w, h, 0.06, 0, y, 0, yaw, x, z, rp(['#e8e0d0', '#2a3a4a', '#d8c8a8'])); rb(w * 0.45, h * 0.55, 0.07, -w * 0.15, y + h * 0.1, 0, yaw, x, z, rp(['#c0453a', '#d89a2a', '#3a7a8a'])); rb(w * 0.25, h * 0.6, 0.075, w * 0.22, y - h * 0.05, 0, yaw, x, z, rp(['#1d1d20', '#e8e0d0', '#4a6a9a'])); };
+      const seatRow = (x, z, yaw, n, col) => { // Wartebank-Reihe mit Einzelsitzen
+        rb(n * 0.52, 0.04, 0.06, 0, 0.3, 0.02, yaw, x, z, '#8a9096');
+        for (let k = 0; k < n; k++) { const lx = (k - (n - 1) / 2) * 0.52; rb(0.46, 0.06, 0.46, lx, 0.44, 0, yaw, x, z, col); rb(0.46, 0.42, 0.05, lx, 0.72, -0.22, yaw, x, z, col); rb(0.04, 0.4, 0.04, lx, 0.2, 0.02, yaw, x, z, '#555'); sit(x, z, yaw, lx); }
+        sol(x, z, n * 0.52, 0.5, yaw, 0.8);
+      };
+      const lounge = (cx, cz, yaw) => {
+        const [c1, c2] = rp(PAL), at = (lx, lz) => P(yaw, cx, cz, lx, lz);
+        rug(cx, cz, 5.0, 3.9, yaw, dim(c1, 0.75), dim(c2, 0.85));
+        for (const s of [-1, 1]) { const [x, z] = at(0, s * 1.45), yy = s < 0 ? yaw : yaw + Math.PI; couch(x, z, yy, c1, 2.3); sit(x, z, yy, -0.5); sit(x, z, yy, 0.5); }
+        for (const s of [-1, 1]) { const [x, z] = at(s * 2.0, 0), yy = yaw - s * Math.PI / 2; couch(x, z, yy, dim(c1, 1.2), 1.0); sit(x, z, yy); }
+        table(cx, cz, yaw, 1.3, 0.7, rp(['#3a2a20', '#2b2b2b', '#6a5a48']));
+        lamp(...at(-2.45, 1.8)); if (r() < 0.7) bush(...at(2.4, -1.8), 0.9);
+        pend(cx, cz, 2.55, 0.28);
+      };
+      const nook = (cx, cz, yaw) => {
+        const [c1] = rp(PAL), at = (lx, lz) => P(yaw, cx, cz, lx, lz);
+        rug(cx, cz, 2.8, 2.8, yaw, dim(c1, 0.8), dim(c1, 1.1));
+        for (const s of [-1, 1]) { const [x, z] = at(s * 0.95, 0), yy = yaw - s * Math.PI / 2; couch(x, z, yy, c1, 1.0); sit(x, z, yy); }
+        table(cx, cz, yaw, 0.6, 0.6, '#3a2a20'); lamp(...at(0, 1.15)); bush(...at(0, -1.15), 0.8);
+      };
+      const rows = (cx, cz) => { // Wartebereich: 3 Sitzreihen, Blick Richtung Empfang (-z)
+        const col = rp(['#2f5a7a', '#3a6a4a', '#7a3a3a', '#5a5a64']);
+        for (let k = -1; k <= 1; k++) seatRow(cx, cz + k * 1.15, Math.PI, 5, col);
+        bush(cx - 1.75, cz + 1.4, 0.8); bush(cx + 1.75, cz + 1.4, 0.8);
+      };
+      const island = (x, z) => { // Pflanzeninsel mit Bank
+        const yaw = r() < 0.5 ? 0 : Math.PI / 2, [a, b] = [P(yaw, x, z, -1.4, 0), P(yaw, x, z, 1.4, 0)];
+        bench(x, z, yaw, 1.9, rp(['#6a4a30', '#4a4a50', '#8a6a48'])); bush(...a, 0.9); bush(...b, 0.9);
+      };
+      const columns = col => {
+        const nx = Math.max(1, Math.round(2 * hw / 8)), nz = Math.max(1, Math.round(2 * hd / 8));
+        for (let i = 1; i < nx; i++) for (let j = 1; j < nz; j++) { const x = -hw + 2 * hw * i / nx, z = -hd + 2 * hd * j / nz; if (okAt(x, z, 0.6)) { pillar(x, z, col); claim(x, z, 0.7); } }
+      };
+      // Randstücke an den Außenwänden (Bank, Konsole, Pflanzkübel)
+      const walls = () => {
+        for (const [nx, nz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+          const len = nx ? 2 * hd : 2 * hw, off = (nx ? hw : hd) - 0.55, yw = Math.atan2(-nx, -nz);
+          for (let t = -len / 2 + 2.5 + rr(0, 1.5); t < len / 2 - 2; t += rr(4.4, 6.2)) {
+            const x = nx ? nx * off : t, z = nx ? t : nz * off, rx = nx ? 0.6 : 1.1, rz = nx ? 1.1 : 0.6;
+            if (!okAt(x, z, rx, rz)) continue;
+            claim(x, z, rx, rz, false);
+            const k = Math.floor(r() * 4), a = P(yw, x, z, -0.5, 0), b = P(yw, x, z, 0.5, 0);
+            if (k === 0) { bench(x, z, yw, 1.8, rp(['#6a4a30', '#4a4a50'])); bush(...P(yw, x, z, 1.35, 0), 0.9); }
+            else if (k === 1) { rb(1.4, 0.8, 0.4, 0, 0.4, 0, yw, x, z, rp(['#4a3426', '#2f353b']), true); rb(1.5, 0.04, 0.46, 0, 0.82, 0, yw, x, z, '#d8d0c0'); lamp(...a); vc.push(colorize(new THREE.IcosahedronGeometry(0.12, 1).translate(b[0], 0.98, b[1]), rp(['#c0453a', '#3a7a8a']))); }
+            else if (k === 2) { rb(1.7, 0.5, 0.5, 0, 0.25, 0, yw, x, z, '#4a4f55', true); bush(...a, 0.75); bush(...b, 0.75); }
+            else { bush(...a, 1.15); bush(...b, 1.0); }
+          }
+        }
+      };
+      // Füllen: Lounges + Nischen nach Fläche, danach Inseln überall dort, wo mehr als ~4.4 m bis zum nächsten Möbel sind
+      const fill = o => {
+        const sc = []; for (let x = -hw + 2; x <= hw - 2; x += 2.2) for (let z = -hd + 2; z <= hd - 2; z += 2.2) sc.push([x + rr(-0.5, 0.5), z + rr(-0.5, 0.5)]);
+        for (let i = sc.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [sc[i], sc[j]] = [sc[j], sc[i]]; }
+        const near = (x, z, d) => pts.some(p => Math.hypot(p[0] - x, p[1] - z) < d), qy = () => Math.floor(r() * 4) * Math.PI / 2;
+        const place = (n, rad, gap, fn) => { let c = 0; for (const [x, z] of sc) { if (c >= n) break; if (okAt(x, z, rad) && !near(x, z, gap)) { fn(x, z); claim(x, z, rad); c++; } } };
+        const base = Math.max(0, Math.round((AR - 150) / 120 * (o.k || 1)));
+        if (o.rows) place(Math.min(o.rows * Math.max(1, base), 6), 2.0, 5.5, (x, z) => rows(x, z));
+        if (o.lounge) place(Math.max(1, Math.round(base * o.lounge)), 3.0, 6.6, (x, z) => lounge(x, z, qy()));
+        if (o.nook) place(Math.max(1, Math.round(base * o.nook)), 1.8, 4.2, (x, z) => nook(x, z, qy()));
+        walls();
+        for (const [x, z] of sc) if (okAt(x, z, 1.4) && dist(x, z) > 4.4) { island(x, z); claim(x, z, 1.4); }
+      };
+      // Marmor-/Granit-/Terrazzo-Bodenfeld mit optionaler Messingeinfassung
+      const inlay = (name, brass) => {
+        T.hall ||= {};
+        const m = T.hall[name] ||= new THREE.MeshStandardMaterial({ roughness: 0.22, metalness: 0.04, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, map: canvasTex(512, 512, (c, w, h) => {
+          c.fillStyle = { marble: '#e9e4da', granite: '#6a6f75', terrazzo: '#dedad0' }[name]; c.fillRect(0, 0, w, h);
+          if (name === 'marble') for (let i = 0; i < 16; i++) { c.strokeStyle = `rgba(${90 + rnd(0, 40)},${90 + rnd(0, 40)},${100 + rnd(0, 40)},${rnd(0.06, 0.2)})`; c.lineWidth = rnd(0.6, 2.4); c.beginPath(); c.moveTo(rnd(0, w), rnd(0, h)); c.bezierCurveTo(rnd(0, w), rnd(0, h), rnd(0, w), rnd(0, h), rnd(0, w), rnd(0, h)); c.stroke(); }
+          else if (name === 'granite') speckle(c, w, h, 9000, 0.25, 0.3);
+          else for (let i = 0; i < 700; i++) { c.fillStyle = ['#b9b3a8', '#9aa6ac', '#c8bfa8', '#f4f1ea'][i % 4]; c.fillRect(rnd(0, w), rnd(0, h), rnd(1, 5), rnd(1, 4)); }
+          c.fillStyle = 'rgba(0,0,0,.16)'; for (let i = 0; i <= 4; i++) { c.fillRect(i * 128 - 1, 0, 2, h); c.fillRect(0, i * 128 - 1, w, 2); }
+        }) });
+        plane(-hw + 0.8, hw - 0.8, -hd + 0.8, hd - 0.8, 0.012, m, 4);
+        if (brass) for (const [w, d, x, z] of [[2 * hw - 1.6, 0.07, 0, -hd + 0.85], [2 * hw - 1.6, 0.07, 0, hd - 0.85], [0.07, 2 * hd - 1.6, -hw + 0.85, 0], [0.07, 2 * hd - 1.6, hw - 0.85, 0]]) fb(w, 0.012, d, x, 0.014, z, '#b8964a');
+      };
+      // Rückwand hinter dem Empfang (nur große Hallen) mit Lamellen und Durchgang; Teppichläufer zum Kern
+      const backWall = (zc, half, col) => {
+        for (const s of [-1, 1]) { fb(half - 0.8, 3.4, 0.2, s * (half + 0.8) / 2, 1.7, zc, col, true); for (let x = 2.7; x < half - 0.1; x += 0.28) fb(0.1, 2.3, 0.05, s * x, 1.35, zc - 0.12, dim(col, 1.35)); }
+        fb(1.6, 1.2, 0.2, 0, 2.8, zc, col); claim(0, zc, half + 0.3, 1.2, false);
+      };
+      const runner = (z0, z1, c1, c2) => { if (z1 - z0 > 3) { rug(0, (z0 + z1) / 2, 2.2, z1 - z0, 0, c1, c2); for (let z = z0 + 1.5; z < z1 - 0.5; z += 4.5) pend(0, z, 2.7, 0.2); } };
+      // Bar: Theke mit Hockern, Rückbuffet mit Flaschen und Spiegel; sucht eine freie Wandposition
+      const bar = () => {
+        for (const len of [5.6, 4.4]) for (const [nx, nz, t] of [[0, 1, 0.5], [0, 1, -0.5], [1, 0, 0.5], [-1, 0, -0.5], [1, 0, -0.5], [-1, 0, 0.5], [0, 1, 0.1], [0, -1, 0.7], [0, -1, -0.7]]) {
+          const ox = nx ? nx * (hw - 3.0) : t * hw, oz = nz ? nz * (hd - 3.0) : t * hd, yw = Math.atan2(nx, nz), cxy = P(yw, ox, oz, 0, 0.5), al = nx ? 2.35 : len / 2 + 0.3, dp = nx ? len / 2 + 0.3 : 2.35;
+          if (!okAt(cxy[0], cxy[1], al, dp)) continue;
+          claim(cxy[0], cxy[1], al, dp);
+          rb(len, 1.0, 0.7, 0, 0.5, 0, yw, ox, oz, '#4a3020', true); rb(len + 0.14, 0.06, 0.92, 0, 1.03, 0, yw, ox, oz, '#e8e2d6'); rb(len, 0.04, 0.04, 0, 0.2, -0.42, yw, ox, oz, '#c8a040');
+          rb(len, 0.9, 0.5, 0, 0.45, 2.6, yw, ox, oz, '#3a2418', true); rb(len, 1.5, 0.04, 0, 1.75, 2.83, yw, ox, oz, '#9fb0b8'); rb(len, 0.03, 0.06, 0, 1.28, 2.58, yw, ox, oz, '#fff', false, pan);
+          for (const sy of [1.12, 1.5]) { rb(len, 0.04, 0.3, 0, sy, 2.68, yw, ox, oz, '#5a3a24'); for (let q = -len / 2 + 0.2; q < len / 2 - 0.1; q += 0.22) { const [bx, bz] = P(yw, ox, oz, q, 2.68); cyl(0.045, 0.045, 0.3, bx, sy + 0.17, bz, rp(['#3a6b3a', '#8b4a2a', '#c9a14a', '#2a4a7a', '#7a2a3a', '#d8d8c8']), vc, 6); } }
+          const ns = Math.floor(len / 1.1);
+          for (let k = 0; k < ns; k++) { const [sx, sz] = P(yw, ox, oz, (k - (ns - 1) / 2) * 1.1, -0.95); cyl(0.24, 0.24, 0.07, sx, 0.72, sz, '#7a2a2a', vc, 12); cyl(0.03, 0.03, 0.7, sx, 0.36, sz, '#c8a040', vc, 6); cyl(0.2, 0.2, 0.03, sx, 0.015, sz, '#2a2a2a', vc, 10); }
+          spot('bar', ...P(yw, ox, oz, 0, 1.55), yw + Math.PI, 'stand', all);
+          for (const s of [-1, 1]) spot('visit', ...P(yw, ox, oz, s * len * 0.27 + 0.55, -1.1), yw, s < 0 ? 'talk' : 'look', all, { bar: true });
+          pend(...P(yw, ox, oz, -len * 0.3, 0), 2.45, 0.2); pend(...P(yw, ox, oz, len * 0.3, 0), 2.45, 0.2);
+          return true;
+        }
+        return false;
+      };
+      return { res, okAt, claim, dist, P, dim, sol, cyl, rug, couch, sit, table, lamp, bush, pillar, pend, chandelier, bench, art, seatRow, lounge, nook, rows, island, columns, walls, fill, inlay, backWall, runner, bar, AR };
+    })();
     if (kind === 'office' || kind === 'flat' || kind === 'ward') {
       // Großraumbüro: Tischreihen in den Randstreifen
       for (let x = -hw + 2; x < hw - 1.5; x += 1.8) { if (Math.abs(x) < 6.5) continue; for (const z of [-hd + 2.2, hd - 2.2]) if (r() < 0.85) desk(x, z, z < 0 ? Math.PI : 0, all); }
@@ -3000,6 +3222,17 @@ function buildFloor(f) {
       const sm = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 0.7), new THREE.MeshStandardMaterial({ map: sign, emissive: 0xffffff, emissiveMap: sign, emissiveIntensity: 0.5 }));
       sm.rotation.y = 0; sm.position.set(1.1, 2.95, 3.14); g.add(sm);
       const sm2 = sm.clone(); sm2.rotation.y = 0; sm2.position.set(0, 2.4, -hd + 5.15); sm2.scale.setScalar(0.6); g.add(sm2);
+      // Große Halle: Bodenfeld, Rückwand, Säulen, Wartebereich/Lounges je nach Gebäudeart
+      const hos = b.type === 'hospital', off = b.type === 'office';
+      hk.inlay(hos ? 'terrazzo' : off ? 'granite' : 'marble', false);
+      hk.claim(0, -hd + 5.5, 2.8, 1.5); for (const s of [-1, 1]) hk.claim(s * (hw - 2.5), -hd + 4, 1.3, 1.4);
+      hk.rug(0, -hd + 1.5, 2.4, 1.6, 0, '#3a3f45', '#8a8f95');
+      if (hd >= 12) { hk.backWall(-hd + 7.1, 4.8, off ? '#3a3f45' : '#4a4036'); const sm3 = sm.clone(); sm3.scale.setScalar(0.88); sm3.position.set(0, 2.6, -hd + 6.97); sm3.rotation.y = Math.PI; g.add(sm3); }
+      hk.runner(-hd + 8, -4.6, '#3a3f45', '#8a8f95');
+      hk.columns(off ? '#c9cdd1' : '#e0d8c8');
+      if (!off && !hos) { const ln = Math.min(4.8, hw - 4), cx = -(3.2 + ln / 2), mz = -hd + 0.55; if (ln >= 2.4 && hk.okAt(cx, mz, ln / 2, 0.3)) { hk.claim(cx, mz, ln / 2, 0.5); rb(ln, 1.5, 0.3, 0, 1.0, 0, 0, cx, mz, '#8a9096', true); const nc = Math.floor(ln / 0.42); for (let rw = 0; rw < 3; rw++) for (let k = 0; k < nc; k++) rb(0.36, 0.4, 0.02, (k - (nc - 1) / 2) * 0.42, 0.55 + rw * 0.5, 0.16, 0, cx, mz, (k + rw) % 3 ? '#aab0b6' : '#c4a35a'); } }
+      if (hos) for (let k = 0; k < 2; k++) { const vx = hw - 0.8, vz = -hd + 9 + k * 1.0; if (hk.okAt(vx, vz, 0.6, 0.5)) { hk.claim(vx, vz, 0.6, 0.5, false); rb(0.8, 1.9, 0.9, 0, 0.95, 0, -Math.PI / 2, vx, vz, k ? '#2a6a9a' : '#9a2a2a', true); rb(0.6, 1.2, 0.02, 0, 1.15, 0.46, -Math.PI / 2, vx, vz, '#fff', false, pan); } }
+      hk.fill(hos ? { rows: 1, nook: 0.6, lounge: 0.2 } : off ? { lounge: 0.8, nook: 0.8 } : { lounge: 1, nook: 0.6 });
     } else if (kind === 'shop') {
       INT.company = SHOPS[b.seed % SHOPS.length];
       rb(2.6, 1.0, 0.7, 0, 0.5, 0, 0, -hw + 3.2, -hd + 3.5, '#704a2a', true); rb(0.4, 0.3, 0.3, 0.6, 1.15, 0, 0, -hw + 3.2, -hd + 3.5, '#222');
@@ -3080,6 +3313,14 @@ function buildFloor(f) {
       const v = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 0.3, 32), new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.9, roughness: 0.25 })); v.rotation.x = Math.PI / 2; v.position.set(hw - 0.3, 1.6, 0); v.rotation.z = Math.PI / 2; g.add(v);
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.8), new THREE.MeshStandardMaterial({ map: signTex('FLEECA', '#1f6b3a', '#ffffff'), emissive: 0xffffff, emissiveMap: signTex('FLEECA', '#1f6b3a', '#ffffff'), emissiveIntensity: 0.4 })); sign.position.set(0, 2.7, -hd + 6.6); sign.rotation.y = Math.PI; g.add(sign);
       plant(-hw + 0.8, -hd + 0.8); plant(hw - 0.8, -hd + 0.8); sofa(-hw + 2.2, -hd + 3, Math.PI / 2, all, '#2a3a2a');
+      // Große Halle: Granitfeld, Warteschlange, Wartebereich, Berater-Tische, Geldautomaten, Säulen
+      hk.inlay('granite', true);
+      hk.claim(0, -hd + 4.9, 4.4, 1.9); hk.claim(-hw + 2.2, -hd + 3, 1.3, 1.4); hk.claim(hw - 1.6, 0, 1.7, 1.9);
+      for (const s of [-1, 1]) for (const pz of [-hd + 1.4, -hd + 3.0]) { hk.cyl(0.03, 0.03, 0.9, s * 1.3, 0.47, pz, '#c8c8c8', vc, 6); hk.cyl(0.14, 0.14, 0.03, s * 1.3, 0.015, pz, '#2a2a2a'); }
+      for (const s of [-1, 1]) rb(0.025, 0.04, 1.6, 0, 0.82, 0, 0, s * 1.3, -hd + 2.2, '#a02020');
+      for (const [ax, az] of [[hw - 0.8, -hd + 2.6], [hw - 0.8, -hd + 3.7]]) if (hk.okAt(ax, az, 0.5)) { hk.claim(ax, az, 0.5, 0.5, false); rb(0.6, 1.8, 0.8, 0, 0.9, 0, -Math.PI / 2, ax, az, '#2d3a44', true); rb(0.4, 0.3, 0.02, 0.1, 1.45, 0.38, -Math.PI / 2, ax, az, '#fff', false, scr); rb(0.5, 0.03, 0.02, 0, 1.85, 0, -Math.PI / 2, ax, az, '#1f6b3a', false); }
+      for (const sx of [-1, 1]) { let nd = 0; for (let z = -hd + 8; z < hd - 2.5 && nd < 3; z += 2.6) { const dx = sx * (hw - 2.2); if (hk.okAt(dx, z, 1.0, 1.1)) { hk.claim(dx, z, 1.0, 1.1, false); desk(dx, z, sx < 0 ? -Math.PI / 2 : Math.PI / 2, all); nd++; } } }
+      hk.columns('#d8d6cc'); hk.fill({ rows: 1, lounge: 0.5, nook: 0.6, k: 0.9 });
     } else if (kind === 'hotel') {
       INT.company = floorName(b, 0).replace('EG · ', '');
       rb(4, 1.1, 0.8, 0, 0.55, 0, 0, 0, -hd + 5, '#5a3a24', true); rb(4.2, 0.05, 1.0, 0, 1.12, 0, 0, 0, -hd + 5, '#e8dcc0');
@@ -3087,6 +3328,16 @@ function buildFloor(f) {
       sofa(-hw + 2.4, -hd + 4, Math.PI / 2, all, '#7a2a2a'); sofa(hw - 2.4, -hd + 4, -Math.PI / 2, all, '#7a2a2a'); plant(-2.6, -hd + 5); plant(2.6, -hd + 5);
       const chand = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffe0a0, emissiveIntensity: 2 })); chand.position.set(0, 2.9, -hd + 3); g.add(chand);
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(5, 0.8), new THREE.MeshStandardMaterial({ map: signTex(INT.company.toUpperCase(), '#2a1a10', '#e8c070', 1024, 160, 'bold 80px Georgia'), emissive: 0xffffff, emissiveMap: signTex(INT.company.toUpperCase(), '#2a1a10', '#e8c070', 1024, 160, 'bold 80px Georgia'), emissiveIntensity: 0.4 })); sign.position.set(0, 2.6, -hd + 6.5); sign.rotation.y = Math.PI; g.add(sign);
+      // Große Halle: Marmorfeld, Rückwand mit Läufer, Bar, Säulen, Lounges, Gepäckwagen (alles gemerged)
+      hk.inlay('marble', true);
+      hk.claim(0, -hd + 5.2, 2.95, 1.9); for (const s of [-1, 1]) hk.claim(s * (hw - 2.4), -hd + 4, 1.3, 1.4);
+      for (const s of [-1, 1]) { rb(0.42, 0.3, 0.04, s * 1.1, 1.3, 0.3, 0, 0, -hd + 5, '#111'); rb(0.38, 0.26, 0.02, s * 1.1, 1.3, 0.32, 0, 0, -hd + 5, '#fff', false, scr); }
+      hk.rug(0, -hd + 1.5, 2.4, 1.6, 0, '#4a2a20', '#b8964a');
+      if (hd >= 12) { hk.backWall(-hd + 6.62, 5.2, '#4a3226'); hk.chandelier(0, (-hd + 7.8 - 4.6) / 2); }
+      hk.runner(-hd + 7.8, -4.6, '#6a1f24', '#b8964a');
+      hk.columns('#e4dccb'); hk.bar();
+      { const tx = 3.6, tz = -hd + 2.2, ty = r() < 0.5 ? 0 : Math.PI; if (hk.okAt(tx, tz, 0.8)) { hk.claim(tx, tz, 0.8); rb(1.0, 0.06, 0.6, 0, 0.14, 0, ty, tx, tz, '#b8964a'); for (const s of [-1, 1]) rb(0.04, 1.5, 0.04, s * 0.46, 0.85, 0, ty, tx, tz, '#b8964a'); rb(1.0, 0.04, 0.04, 0, 1.55, 0, ty, tx, tz, '#b8964a'); rb(0.8, 0.5, 0.45, -0.05, 0.42, 0, ty, tx, tz, rp(['#6a2a2a', '#2a3a5a'])); rb(0.6, 0.4, 0.4, 0, 0.87, 0, ty, tx, tz, rp(['#8a6a40', '#3a3a40'])); hk.sol(tx, tz, 1.0, 0.6, ty, 1.0); } }
+      hk.fill({ lounge: 1, nook: 0.9 });
     } else if (kind === 'police') {
       INT.company = 'Polizeiwache Mission Row';
       rb(4.2, 1.1, 0.8, 0, 0.55, 0, 0, 0, -hd + 4.5, '#2a3344', true); rb(4.4, 0.05, 1.0, 0, 1.12, 0, 0, 0, -hd + 4.5, '#c8c0b0');
@@ -3097,6 +3348,13 @@ function buildFloor(f) {
       const sign = canvasTex(1024, 160, (c, w, h) => { c.fillStyle = '#0d1b33'; c.fillRect(0, 0, w, h); c.fillStyle = '#e8d9b0'; c.font = 'bold 84px Georgia'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('LOS SANTOS POLICE', w / 2, h / 2 + 4); });
       const sm = new THREE.Mesh(new THREE.PlaneGeometry(6, 0.95), new THREE.MeshStandardMaterial({ map: sign, emissive: 0xffffff, emissiveMap: sign, emissiveIntensity: 0.4 }));
       sm.position.set(0, 2.6, -hd + 5.6); g.add(sm);
+      // Große Wache: Wartebänke, zweite Schreibtischreihe, Pinnwände, Säulen
+      hk.claim(0, -hd + 4.5, 2.6, 1.8); hk.claim(-hw + 3.4, hd - 1.8, 3.0, 1.9);
+      for (const s of [-1, 1]) hk.claim(s * (hw - 1.9), (-hd + 6.2 + hd - 4.2) / 2, 1.7, (2 * hd - 10.4) / 2 + 0.8);
+      hk.rug(0, -hd + 1.5, 2.4, 1.6, 0, '#2a3344', '#8a93a0');
+      if (hw >= 12) for (const s of [-1, 1]) for (let z = -hd + 8.5; z < hd - 4.5; z += 2.8) { const dx = s * (hw - 6.2); if (hk.okAt(dx, z, 0.9, 1.2)) { hk.claim(dx, z, 0.9, 1.2, false); desk(dx, z, s < 0 ? Math.PI / 2 : -Math.PI / 2, all); } }
+      for (const [bx, bz, by] of [[-5.2, -hd + 1.0, 0], [5.2, -hd + 1.0, 0]]) if (hk.okAt(bx, bz, 1.3, 0.5)) { hk.claim(bx, bz, 1.3, 0.5, false); rb(2.4, 1.4, 0.06, 0, 1.45, 0, by, bx, bz, '#8a6a40'); rb(0.06, 1.0, 0.06, -1.0, 0.5, 0, by, bx, bz, '#333'); rb(0.06, 1.0, 0.06, 1.0, 0.5, 0, by, bx, bz, '#333'); for (let k = 0; k < 6; k++) rb(0.5, 0.65, 0.02, -0.85 + (k % 3) * 0.85, 1.15 + Math.floor(k / 3) * 0.7, 0.04, by, bx, bz, rp(['#f4f0e0', '#e8d890', '#d8e0e8'])); }
+      hk.columns('#cfd3d8'); hk.fill({ rows: 1, k: 1.2 });
     }
   }
   // Meshes zusammenführen
@@ -3104,7 +3362,7 @@ function buildFloor(f) {
   add(vc, M.ivcol); add(scr, T.mats.screen, false); add(pan, T.mats.panel, false);
   if (glass.length) g.add(new THREE.Mesh(mergeGeometries(glass), T.mats.glass));
   for (const s of prods) stockFinish(s, g); // Regalware, Obst, Fisch, Kühlschrank-Inhalt: wenige InstancedMeshes
-  F.rooms = rooms;
+  F.rooms = rooms; if (F.rdefs) mkRoomDoors(F, g, F.rdefs, F.rdPlates);
   if (myHotelFloor(F) && rooms.length) {
     const q = rooms[player.hotel.room % rooms.length], bed = spots.find(sp => sp.type === 'bed' && sp.room === q);
     if (bed) { const mk = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.2, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false })); mk.position.set(q.inPt[0], 0.6, q.inPt[1]); g.add(mk); F.hotelBed = { x: q.inPt[0], z: q.inPt[1] }; }
@@ -3115,6 +3373,7 @@ function buildFloor(f) {
 function unloadFloor(F) {
   for (const s of F.solids) removeSolid(s);
   for (const n of F.npcs) { if (n.at && n.at.occ === n) n.at.occ = null; disposeHuman(n.h); }
+  F.rd?.tex?.dispose();
   F.group.traverse(o => { if (o.geometry && !o.isSkinnedMesh && o.geometry !== F.doors[0]?.geometry) o.geometry.dispose(); });
   INT.root.remove(F.group); INT.floors.delete(F.f);
 }
@@ -3271,12 +3530,12 @@ function spawnINpc(F, role, s, look) {
   if (!s.multi) s.occ = n; F.npcs.push(n); return n;
 }
 function populateFloor(F) {
-  const S = F.spots, free = t => S.filter(s => s.type === t && !s.occ), kind = F.kind;
+  const S = F.spots, free = t => S.filter(s => s.type === t && !s.occ), kind = F.kind, seated = n => free('visit').filter(q => q.pose === 'sit').sort(() => Math.random() - 0.5).slice(0, n); // seated: zufällige Sitzplätze (Lounge/Wartebereich)
   if (kind === 'office') { const desks = free('desk'); desks.sort(() => Math.random() - 0.5); desks.slice(0, Math.min(10, Math.ceil(desks.length * 0.7))).forEach(s => spawnINpc(F, 'worker', s)); }
   else if (kind === 'flat') { for (const q of F.rooms) if (Math.random() < 0.75 && !(myHotelFloor(F) && F.rooms.indexOf(q) === player.hotel.room % F.rooms.length)) { const opts = S.filter(s => s.room === q && !s.occ && s.type !== 'window'); const s = nightF > 0.6 ? opts.find(o => o.type === 'bed') : pick(opts); if (s) spawnINpc(F, 'resident', s, INT.b.type === 'prison' ? INMATE_LOOK() : undefined); } }
   else if (kind === 'ward') { for (const s of free('bed')) if (Math.random() < 0.7) spawnINpc(F, 'patient', s); for (let k = 0; k < 2; k++) { const s = pick(free('bedside')); if (s) spawnINpc(F, 'nurse', s, { gender: 'f', tint: '#cfe8f0' }); } }
-  else if (kind === 'bank') { for (const s of free('cashier')) spawnINpc(F, 'cashier', s, officeLook()); for (const v of free('visit').slice(0, 2)) spawnINpc(F, 'visitor', v); }
-  else if (kind === 'lobby' || kind === 'police' || kind === 'hotel') { const s = free('reception')[0]; if (s) spawnINpc(F, 'reception', s, kind === 'police' ? COP_LOOK : null); const v = free('visit')[0]; if (v) spawnINpc(F, 'visitor', v); if (kind === 'police') for (const d of free('desk').slice(0, 3)) spawnINpc(F, 'worker', d, COP_LOOK); }
+  else if (kind === 'bank') { for (const s of free('cashier')) spawnINpc(F, 'cashier', s, officeLook()); for (const v of free('visit').slice(0, 2)) spawnINpc(F, 'visitor', v); for (const v of seated(3)) spawnINpc(F, 'visitor', v); for (const d of free('desk').slice(0, 2)) spawnINpc(F, 'worker', d, officeLook()); }
+  else if (kind === 'lobby' || kind === 'police' || kind === 'hotel') { const s = free('reception')[0]; if (s) spawnINpc(F, 'reception', s, kind === 'police' ? COP_LOOK : null); const v = free('visit')[0]; if (v) spawnINpc(F, 'visitor', v); if (kind === 'police') for (const d of free('desk').slice(0, 3)) spawnINpc(F, 'worker', d, COP_LOOK); for (const v of seated(kind === 'hotel' ? 4 : 3)) spawnINpc(F, 'visitor', v); const bs = free('bar')[0]; if (bs) { spawnINpc(F, 'cashier', bs); for (const v of free('visit').filter(q => q.bar).slice(0, 2)) spawnINpc(F, 'visitor', v); } }
   else if (kind === 'shop' || kind === 'market' || kind === 'gas') { const s = free('cashier')[0]; if (s) spawnINpc(F, 'cashier', s); for (let k = 0; k < (kind === 'market' ? 6 : 3); k++) { const sh = pick(free('shelf')); if (sh) spawnINpc(F, 'customer', sh); } }
 }
 const exitSpotOf = F => F.f === 0 ? { type: 'exit', x: F.exit.x, z: F.exit.z - 0.5, yaw: 0, pose: 'stand', multi: true, room: { open: true } } : F.elevSpot;
@@ -3345,6 +3604,7 @@ function updateInterior(dt) {
       [n.wx, n.wz] = toWorld(n.x, n.z); n.wy = floorY(F.f); n.x0 = n.x; INT.npcs.push(n);
     }
     // Neue Leute kommen mit dem Aufzug bzw. durch die Tür
+    updateDoors(F, dt, plx, plz);
     F.respawnT -= dt;
     if (F.respawnT < 0 && !INT.panic) {
       F.respawnT = rnd(10, 25);
@@ -3353,7 +3613,7 @@ function updateInterior(dt) {
         let role = null, tgt = null;
         if (F.kind === 'office') { tgt = pick(free('desk')); role = 'worker'; }
         else if (['shop', 'market', 'gas'].includes(F.kind)) { tgt = pick(free('shelf')); role = 'customer'; }
-        else if (F.kind === 'lobby' || F.kind === 'police') { tgt = pick(free('visit')); role = 'visitor'; }
+        else if (F.kind === 'lobby' || F.kind === 'police' || F.kind === 'hotel' || F.kind === 'bank') { tgt = pick(free('visit')); role = 'visitor'; }
         if (tgt) { const n = spawnINpc(F, role, F.f === 0 || INT.b.small ? exitSpotOf(F) : F.elevSpot); n.home = tgt; iGo(n, tgt, rnd(20, 60)); }
       }
     }
@@ -3658,11 +3918,24 @@ function updateHail(dt) {
 
 // ---------- Police ----------
 const VIS_NEAR = 22, VIS_FAR = 75, VIS_ANG = 1.1;
-const lastSeen = { x: 0, z: 0 };
+const lastSeen = { x: 0, z: 0, foot: false, car: null, bld: null, sig: null };
+// Fahrzeug, in dem der Spieler gerade sitzt (auch als Taxi-/Ride-Fahrgast), sonst null
+const playerVeh = () => player.car || (player.rideSeat && ride?.car) || null;
+const CAR_NAME = { sedan: 'Limousine', coupe: 'Coupé', suv: 'SUV', compact: 'Kleinwagen', pickup: 'Pick-up', van: 'Transporter', convertible: 'Cabrio', muscle: 'Muscle-Car', italia: 'Sportwagen', concept: 'Sportwagen', limo: 'Stretch-Limousine', police: 'Streifenwagen' };
+function colName(hex) {
+  const h = {}; new THREE.Color(hex).getHSL(h); const d = h.h * 360;
+  if (h.l < 0.14) return 'schwarz'; if (h.l > 0.88) return 'weiß'; if (h.s < 0.18) return h.l > 0.6 ? 'silbern' : 'grau';
+  return d < 15 || d >= 345 ? 'rot' : d < 40 ? (h.l < 0.4 ? 'braun' : 'orange') : d < 70 ? (h.l > 0.65 ? 'beige' : 'gelb') : d < 170 ? 'grün' : d < 200 ? 'türkis' : d < 255 ? 'blau' : 'violett';
+}
+// Dativ-Beschreibung für den Polizeifunk: "einem blauen Coupé"
+const carDesc = c => c.taxi ? 'einem Taxi' : `${c.type === 'sedan' || c.type === 'limo' ? 'einer' : 'einem'} ${colName(c.color || '#888')}en ${CAR_NAME[c.type] || 'Wagen'}`;
+// Liegt ein Punkt im Kamerabild (Frustum)? Für Spawns außer Sicht
+const _fr = new THREE.Frustum(), _fm = new THREE.Matrix4(), _fs = new THREE.Sphere();
+function inCamView(x, z, r = 6) { camera.updateMatrixWorld(); _fm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); _fr.setFromProjectionMatrix(_fm); _fs.set(new THREE.Vector3(x, 1.5, z), r); return _fr.intersectsSphere(_fs); }
 function copSees(c) {
   if (INT.inside && INT.b?.door) { const dr = INT.b.door; if (Math.hypot(player.x - dr.x, player.z - dr.z) > 7 || Math.hypot(c.x - dr.x, c.z - dr.z) > 45) return false; }
-  const tgt = player.car || player, dx = tgt.x - c.x, dz = tgt.z - c.z, d = Math.hypot(dx, dz);
-  const sn = player.sneak && !player.car, far = sn ? VIS_FAR * 0.55 : VIS_FAR, near = sn ? 10 : VIS_NEAR;
+  const tgt = playerVeh() || player, dx = tgt.x - c.x, dz = tgt.z - c.z, d = Math.hypot(dx, dz);
+  const sn = player.sneak && !playerVeh(), far = sn ? VIS_FAR * 0.55 : VIS_FAR, near = sn ? 10 : VIS_NEAR;
   if (d > far) return false;
   if (d > near && Math.abs(angDiff(c.yaw, Math.atan2(dx, dz))) > VIS_ANG) return false;
   return lineOfSight(c.x, c.z, tgt.x, tgt.z);
@@ -3682,14 +3955,14 @@ function roadWaypoint(c, tx, tz) {
 }
 // Polizei: Rollen Verfolgen / Abfangen / Blockieren, aussteigen wenn Franklin zu Fuß ist
 function updatePolice(c, dt) {
-  const a = c.ai, tgt = player.car || player, pv = player.car ? [player.car.vx, player.car.vz] : [player.vx, player.vz];
+  const veh = playerVeh(), a = c.ai, tgt = veh || player, pv = veh ? [veh.vx, veh.vz] : [player.vx, player.vz];
   const pd = Math.hypot(tgt.x - c.x, tgt.z - c.z);
   if (c.deployed) { driveCar(c, 0, 0, true, dt); if (c.deployT !== undefined) deployCrew(c, dt); return; }
   let tx, tz;
   if (wanted > 0 && wantedCool < 2 && !INT.inside) {
     tx = tgt.x; tz = tgt.z; c.bldDone = null; c.footDone = false;
-    if (c.role === 'intercept' && player.car) { tx += pv[0] * 2.5; tz += pv[1] * 2.5; }
-    if (c.role === 'block' && player.car && Math.hypot(...pv) < 6 && pd < 35) { const f = [Math.sin(player.car.yaw), Math.cos(player.car.yaw)]; tx += f[0] * 9; tz += f[1] * 9; }
+    if (c.role === 'intercept' && veh) { tx += pv[0] * 2.5; tz += pv[1] * 2.5; }
+    if (c.role === 'block' && veh && Math.hypot(...pv) < 6 && pd < 35) { const f = [Math.sin(veh.yaw), Math.cos(veh.yaw)]; tx += f[0] * 9; tz += f[1] * 9; }
   } else if (wanted > 0) {
     if (INT.inside && wantedCool < 2) lastSeen.bld = INT.b;
     const bl = lastSeen.bld, inSearch = bl ? squad.cops.length * (squad.b === bl) + officers.filter(o => o.bld === bl).length : 0;
@@ -3698,7 +3971,7 @@ function updatePolice(c, dt) {
       if (Math.hypot(tx - c.x, tz - c.z) < 16 && c.driver) { c.bldDone = bl; c.searchB = bl; c.deployed = true; c.deployT = 0; if (Math.random() < 0.6) say(pick(LINES.surround), { who: 'Polizeifunk', radio: true, color: '#6fa8ff' }); }
     } else if (!bl && lastSeen.foot && !c.footDone && c.driver && Math.hypot(lastSeen.x - c.x, lastSeen.z - c.z) < 22) { c.footDone = true; c.deployed = true; c.deployT = 0; }
     else {
-      const ref = !bl && lastSeen.car && cars.includes(lastSeen.car) && lastSeen.car !== player.car ? lastSeen.car : lastSeen;
+      const ref = !bl && lastSeen.car && cars.includes(lastSeen.car) && lastSeen.car !== veh ? lastSeen.car : lastSeen;
       if (!a.search || Math.hypot(a.search[0] - c.x, a.search[1] - c.z) < 14) a.search = [ref.x + rnd(-60, 60), ref.z + rnd(-60, 60)];
       [tx, tz] = a.search;
     }
@@ -3715,7 +3988,7 @@ function updatePolice(c, dt) {
   if (a.stuck > 1.6) { a.rev = 1.4; a.stuck = 0; }
   if (a.rev > 0) { a.rev -= dt; thr = -1; steer = -Math.sign(diff); }
   // Franklin zu Fuß in der Nähe: anhalten und aussteigen
-  if (wanted > 0 && wantedCool < 2 && !player.car && !INT.inside && pd < 24 && (c.sees || pd < 12)) {
+  if (wanted > 0 && wantedCool < 2 && !veh && !INT.inside && pd < 24 && (c.sees || pd < 12)) {
     thr = Math.abs(c.speedF || 0) > 1 ? -Math.sign(c.speedF) : 0;
     if (Math.abs(c.speedF || 0) < 1.5 && c.driver) { c.deployed = true; c.deployT = 0; }
   }
@@ -3723,7 +3996,7 @@ function updatePolice(c, dt) {
   // Schüsse aus dem fahrenden Wagen (ab 3 Sternen) & Megafon
   if (wanted >= 3 && c.sees && pd < 28) {
     a.fire = (a.fire || 0) - dt;
-    if (a.fire <= 0) { a.fire = rnd(0.7, 1.3); sfx.shot(c.x, c.z, 0.5); if (Math.random() < 0.35) { if (player.car) damageCar(player.car, 2 + wanted); else hurtPlayer(3 + wanted * 1.5); } }
+    if (a.fire <= 0) { a.fire = rnd(0.7, 1.3); sfx.shot(c.x, c.z, 0.5); if (Math.random() < 0.35) { if (veh) damageCar(veh, 2 + wanted); else hurtPlayer(3 + wanted * 1.5); } }
   }
   a.mega = (a.mega ?? rnd(1, 4)) - dt;
   if (wanted > 0 && c.sees && a.mega <= 0 && pd < 30) { a.mega = rnd(10, 16); say(pick(LINES.mega), { who: 'Polizei (Megafon)', color: '#6fa8ff' }); }
@@ -3751,13 +4024,13 @@ function copCarRelease(car, dec) {
   if (wanted === 0 && car.mode !== 'wreck') { if (!car.driver) setDriver(car, makeHuman(COP_LOOK)); car.mode = 'ai'; initAI(car, dirOfYaw(car.yaw)); }
 }
 function updateOfficers(dt) {
-  const tgt = player.car || player;
+  const veh = playerVeh(), tgt = veh || player;
   for (let i = officers.length - 1; i >= 0; i--) {
     const o = officers[i];
     if (o.state === 'dead') { if ((o.t -= dt) < 0) { scene.remove(o.h.group); disposeHuman(o.h); officers.splice(i, 1); copCarRelease(o.car, true); } continue; }
     const dx = tgt.x - o.x, dz = tgt.z - o.z, d = Math.hypot(dx, dz), gate = !INT.inside || (Math.hypot(player.x - INT.b.door.x, player.z - INT.b.door.z) < 7 && Math.hypot(o.x - INT.b.door.x, o.z - INT.b.door.z) < 30), los = gate && d < 70 && lineOfSight(o.x, o.z, tgt.x, tgt.z);
     o.sees = los && d < 55;
-    const carAway = player.car && Math.hypot(player.car.vx, player.car.vz) > 5 && d > 14;
+    const carAway = veh && d > 14; // Spieler im Fahrzeug: Beamte zurück in die Wagen
     if (wanted === 0 || (carAway && o.sees)) o.state = 'return';
     let mx = 0, mz = 0, sp = 0, aim = false;
     if (o.state === 'return') {
@@ -3783,19 +4056,19 @@ function updateOfficers(dt) {
       } else { if (!o.sp || Math.hypot(o.sp[0] - o.x, o.sp[1] - o.z) < 1.5) o.sp = [lastSeen.x + rnd(-18, 18), lastSeen.z + rnd(-18, 18)]; [gx, gz] = o.sp; }
       const ex = gx - o.x, ez = gz - o.z, e = Math.hypot(ex, ez) || 1; mx = ex / e; mz = ez / e; sp = o.bld ? 4.2 : 2.3;
     } else {
-      const keep = wanted >= 2 ? (los ? 11 : 2.5) : player.car ? 2.8 : 1.4;
+      const keep = wanted >= 2 ? (los ? 11 : 2.5) : veh ? 2.8 : 1.4;
       if (d > keep) { mx = dx / d; mz = dz / d; sp = d > 8 ? 4.6 : 2.2; }
       if (wanted >= 2 && los && d < 40) {
         aim = true; sp = Math.min(sp, 2.2); o.fire -= dt;
         if (o.fire <= 0) {
           o.fire = rnd(0.6, 1.2); sfx.shot(o.x, o.z, 0.7);
-          const from = new THREE.Vector3(o.x, groundH(o.x, o.z) + 1.45, o.z), to = new THREE.Vector3(tgt.x + rnd(-0.6, 0.6), (player.car ? player.car.y + 0.9 : player.y + 1.2), tgt.z + rnd(-0.6, 0.6));
+          const from = new THREE.Vector3(o.x, groundH(o.x, o.z) + 1.45, o.z), to = new THREE.Vector3(tgt.x + rnd(-0.6, 0.6), (veh ? veh.y + 0.9 : player.y + 1.2), tgt.z + rnd(-0.6, 0.6));
           const tr = new THREE.Mesh(tracerG, tracerM); tr.position.copy(from); tr.lookAt(to); tr.scale.z = from.distanceTo(to); scene.add(tr); tracers.push({ m: tr, t: 0.05 });
-          if (Math.random() < clamp(0.6 - d * 0.012 - (player.sneak ? 0.15 : 0), 0.08, 0.6)) { if (player.car) damageCar(player.car, 3 + wanted); else hurtPlayer(4 + wanted * 1.5); }
+          if (Math.random() < clamp(0.6 - d * 0.012 - (player.sneak ? 0.15 : 0), 0.08, 0.6)) { if (veh) damageCar(veh, 3 + wanted); else hurtPlayer(4 + wanted * 1.5); }
         }
       }
       // Festnahme bei einem Stern
-      if (wanted === 1 && d < (player.car ? 3.4 : 2.3) && (player.car ? Math.hypot(player.car.vx, player.car.vz) < 1 : Math.hypot(player.vx, player.vz) < 1.3)) {
+      if (wanted === 1 && d < (veh ? 3.4 : 2.3) && (veh ? Math.hypot(veh.vx, veh.vz) < 1 : Math.hypot(player.vx, player.vz) < 1.3)) {
         o.arrest += dt; if (o.arrest > 0.2 && o.arrest - dt <= 0.2) say(pick(LINES.arrest), { who: 'Polizei', color: '#6fa8ff', voice: 'pavoque', prio: true });
         if (o.arrest > 1.8) busted();
       } else o.arrest = Math.max(0, o.arrest - dt);
@@ -3900,7 +4173,7 @@ function reportCrime(type, x, z, stars, indoor = false) {
   if (!wit.length) return;
   if (Math.random() > 1 - Math.pow(0.45, wit.length)) return;
   const w = pick(wit);
-  pendingCall = { type, x, z, stars, w, t: rnd(4, 7), phase: 'call', d: districtOf(x, z), bld: indoor ? INT.b : null, foot: !player.car };
+  pendingCall = { type, x, z, stars, w, t: rnd(4, 7), phase: 'call', d: districtOf(x, z), bld: indoor ? INT.b : null, car: playerVeh(), foot: !playerVeh() };
   if (!indoor) { w.state = 'walk'; w.path = null; w.task = { type: 'calling' }; w.pose = 'phone'; w.wait = 12; }
 }
 function updateCrimeCalls(dt) {
@@ -3910,7 +4183,7 @@ function updateCrimeCalls(dt) {
   if (c.phase === 'call' && c.t < 3 && !c.said) { c.said = true; if (Math.hypot((c.w.wx ?? c.w.x) - player.x, (c.w.wz ?? c.w.z) - player.z) < 30) say(pick(LINES.witness[c.type]), { who: 'Zeuge (Telefon)', voice: c.w.voice, rate: c.w.vrate, h: c.w.h, prio: true }); }
   if (c.phase === 'call' && c.t <= 0) { c.phase = 'radio'; c.t = rnd(3, 5); if (scannerOn || Math.hypot(c.x - player.x, c.z - player.z) < 220) say(pick(CRIME_RADIO).replace('{c}', CRIME[c.type]).replace('{d}', c.d), { who: 'Polizeifunk', radio: true, color: '#6fa8ff', prio: true }); }
   else if (c.phase === 'radio' && c.t <= 0) {
-    if (wanted < c.stars) { const before = wanted; wanted = c.stars; lastSeen.x = c.x; lastSeen.z = c.z; lastSeen.bld = c.bld; lastSeen.foot = c.foot; lastSeen.car = null; wantedCool = 1.5; if (before === 0) { notice('GESUCHT!', 1500); say(pick(LINES.chars[cur].cops), { who: CHARS[cur].name, color: CHARS[cur].col }); } }
+    if (wanted < c.stars) { const before = wanted; wanted = c.stars; lastSeen.x = c.x; lastSeen.z = c.z; lastSeen.bld = c.bld; lastSeen.foot = c.foot; lastSeen.car = c.car && cars.includes(c.car) ? c.car : null; wantedCool = 1.5; if (before === 0) { lastSeen.sig = null; notice('GESUCHT!', 1500); say(pick(LINES.chars[cur].cops), { who: CHARS[cur].name, color: CHARS[cur].col }); } }
     if (c.w.task?.type === 'calling') { c.w.task = null; c.w.wait = 0; }
     pendingCall = null;
   }
@@ -3922,26 +4195,30 @@ function busted() {
   sfx.wasted(); abortSeq(); if (player.car) exitCar(true);
 }
 // Einsatzleitung: Streifen auffüllen, Einheiten zuteilen, Verstärkung von der Wache
-let dispatchT = 0, hqT = 0;
+let dispatchT = 0, hqT = 0, dispClk = 0, respAt = 0, prevW = 0;
+// Streifenwagen nur auf Straße, weit weg und außerhalb des Kamerabilds erscheinen lassen
+function copSpawnPoint() { for (let t = 0; t < 10; t++) { const rp = roadPoint(130, 280); if (rp && !inCamView(rp.x, rp.z)) return rp; } return null; }
 function updateDispatch(dt) {
-  dispatchT -= dt; hqT -= dt; if (dispatchT > 0) return; dispatchT = 1;
+  dispatchT -= dt; hqT -= dt; dispClk += dt; if (dispatchT > 0) return; dispatchT = 1;
+  if (wanted > 0 && !prevW) respAt = dispClk + [0, 8, 6, 4, 3, 2][wanted]; // Reaktionszeit der Leitstelle je Sterne
+  prevW = wanted;
   const units = cars.filter(c => c.cop && c.mode !== 'wreck'), pursuing = units.filter(c => c.mode === 'police');
   const dist = c => Math.hypot(c.x - player.x, c.z - player.z);
   if (wanted > 0) {
     const need = [0, 2, 3, 5, 7, 9][wanted] - pursuing.length;
-    if (need > 0) {
+    if (need > 0 && dispClk >= respAt) {
       const free = units.filter(c => c.mode === 'ai').sort((a, b) => dist(a) - dist(b)).slice(0, need);
       for (const c of free) { c.mode = 'police'; c.ai.stuck = 0; }
       if (free.length < need && hqT <= 0 && POLICE_HQ.exit) {
-        hqT = 4; const e = POLICE_HQ.exit;
-        if (!cars.some(o => Math.hypot(o.x - e.x, o.z - e.z) < 7)) { const c = makeCar('police', '#000', e.x, e.z, dirYaw(1), 'police'); c.cop = true; if (Math.random() < 0.5) say(pick(LINES.hq), { who: 'Polizeifunk', radio: true, color: '#6fa8ff' }); }
+        hqT = [4, 9, 7, 5, 4, 3][wanted]; const e = POLICE_HQ.exit, rp = Math.hypot(e.x - player.x, e.z - player.z) > 130 && !inCamView(e.x, e.z) ? { x: e.x, z: e.z, dir: 1 } : copSpawnPoint();
+        if (rp && !cars.some(o => Math.hypot(o.x - rp.x, o.z - rp.z) < 7)) { const c = makeCar('police', '#000', rp.x, rp.z, dirYaw(rp.dir), 'police'); c.cop = true; if (Math.random() < 0.5) say(pick(LINES.hq), { who: 'Polizeifunk', radio: true, color: '#6fa8ff' }); }
       }
     }
     pursuing.sort((a, b) => dist(a) - dist(b)).forEach((c, k) => c.role = ['chase', 'intercept', 'block'][k] || 'chase');
   } else {
     for (const c of pursuing) if (!c.deployed) { c.mode = 'ai'; initAI(c, dirOfYaw(c.yaw)); const D = DIRS[c.ai.dir], k = Math.round((D[0] === 0 ? c.x : c.z) / P + N / 2); c.ai.laneC = laneFor(c.ai.dir, k); }
   }
-  if (units.length < 5) { const rp = roadPoint(120, 280); if (rp) { const c = makeCar('police', '#000', rp.x, rp.z, 0, 'ai'); c.cop = true; initAI(c, rp.dir); } }
+  if (units.length < 5 && (!wanted || dispClk >= respAt)) { const rp = copSpawnPoint(); if (rp) { const c = makeCar('police', '#000', rp.x, rp.z, 0, 'ai'); c.cop = true; initAI(c, rp.dir); } }
 }
 
 // ---------- Player & Charaktere ----------
@@ -3987,7 +4264,8 @@ function hurtPlayer(d) {
 }
 function addWanted(n, min = 0) {
   const before = wanted; wanted = clamp(Math.max(wanted + n, min), 0, 5); wantedCool = 0;
-  lastSeen.x = player.x; lastSeen.z = player.z; lastSeen.foot = !player.car; lastSeen.car = player.car; lastSeen.bld = INT.inside ? INT.b : null;
+  lastSeen.x = player.x; lastSeen.z = player.z; lastSeen.foot = !playerVeh(); lastSeen.car = playerVeh(); lastSeen.bld = INT.inside ? INT.b : null;
+  if (before === 0) lastSeen.sig = null;
   if (wanted > before && before === 0) { notice('GESUCHT!', 1500); say(pick(LINES.chars[cur].cops), { who: CHARS[cur].name, color: CHARS[cur].col, prio: true }); radioT = 3; }
 }
 function fade(on) { $('fade').classList.toggle('on', on); }
@@ -5240,9 +5518,9 @@ function updateScanner(dt) {
   scanT -= dt;
   if (scanT < 0) {
     scanT = wanted > 0 ? rnd(6, 10) : rnd(12, 22);
-    const tgt = player.car || player;
+    const tgt = playerVeh() || player, lsd = lastSeen.car && cars.includes(lastSeen.car) ? ` ${carDesc(lastSeen.car)}` : lastSeen.foot ? ' zu Fuß' : '';
     const line = wanted > 0
-      ? pick([`Verdächtiger zuletzt gesehen in ${districtOf(lastSeen.x, lastSeen.z)}.`, `Alle Einheiten nach ${districtOf(lastSeen.x, lastSeen.z)}, Verdächtiger ist bewaffnet.`, wantedCool > 2 ? `Kein Sichtkontakt mehr, wir durchsuchen ${districtOf(lastSeen.x, lastSeen.z)}.` : `Sichtkontakt in ${districtOf(tgt.x, tgt.z)}, Verfolgung läuft.`, `Zentrale, Verdächtiger zuletzt in ${districtOf(lastSeen.x, lastSeen.z)} gesehen, alle Wagen dorthin.`, `Verfolgung geht weiter, Richtung ${districtOf(tgt.x, tgt.z)}.`])
+      ? pick([`Verdächtiger${lsd ? ' ' + (lastSeen.foot ? 'zu Fuß' : 'in' + lsd) : ''} zuletzt gesehen in ${districtOf(lastSeen.x, lastSeen.z)}.`, `Alle Einheiten nach ${districtOf(lastSeen.x, lastSeen.z)}, Verdächtiger ist bewaffnet.`, wantedCool > 2 ? `Kein Sichtkontakt mehr, wir durchsuchen ${districtOf(lastSeen.x, lastSeen.z)}.` : `Sichtkontakt in ${districtOf(tgt.x, tgt.z)}, Verfolgung läuft.`, `Zentrale, Verdächtiger zuletzt in ${districtOf(lastSeen.x, lastSeen.z)} gesehen, alle Wagen dorthin.`, `Verfolgung geht weiter, Richtung ${districtOf(tgt.x, tgt.z)}.`])
       : pick(SCAN).replace('{n}', pick([7, 12])).replace('{d}', pick(DISTRICTS.flat()));
     say(line, { who: 'Polizeifunk', color: '#6fa8ff', pitch: 0.7, rate: 1.15, vol: 0.7, radio: true });
   }
@@ -5437,10 +5715,11 @@ function updateCamera(dt) {
   camTarget.set(tx, ty, tz);
   const cp = Math.cos(camPitch), dx = -Math.sin(camYaw) * cp, dy = Math.sin(camPitch), dz = -Math.cos(camYaw) * cp;
   let d = camDist;
-  for (let s = 0.3; s <= camDist; s += 0.2) if (solidAt(tx + dx * s, ty + dy * s, tz + dz * s)) { d = Math.max(0.6, s - 0.4); break; }
+  const inLift = INT.active && INT.cab && !player.car && inCab(); // in der Kabine: Kamera nur durch die Kabinenwände begrenzen (Tür-/Etagenkollision ließ sie beim Anfahren ab- und hochspringen)
+  if (!inLift) for (let s = 0.3; s <= camDist; s += 0.2) if (solidAt(tx + dx * s, ty + dy * s, tz + dz * s)) { d = Math.max(0.6, s - 0.4); break; }
   camera.position.set(tx + dx * d, Math.max(ty + dy * d, INT.inside ? player.y + 0.3 : 0.4), tz + dz * d);
-  if (INT.inside) camera.position.y = Math.min(camera.position.y, Math.max(floorY(curFloorOf(player.y)) + 3.15, player.y + 1.9));
-  if (INT.active && INT.cab && !player.car && inCab()) {
+  if (INT.inside && !inLift) camera.position.y = Math.min(camera.position.y, Math.max(floorY(curFloorOf(player.y)) + 3.15, player.y + 1.9));
+  if (inLift) {
     let [clx, clz] = toLocal(camera.position.x, camera.position.z); clx = clamp(clx, ELEV[0] + 0.12, ELEV[1] - 0.12); clz = clamp(clz, ELEV[2] + 0.12, ELEV[3] - 0.12);
     const [cwx, cwz] = toWorld(clx, clz); camera.position.x = cwx; camera.position.z = cwz; camera.position.y = clamp(camera.position.y, INT.cab.y + 0.6, INT.cab.y + 2.45);
   }
@@ -5627,26 +5906,43 @@ function updateCrashed(c, dt) {
     } else { c.mode = 'abandoned'; if (c.driver) { c.doors[0].target = 1; c.npcSeq = { type: 'exit', t: 0 }; } }
   }
 }
-let visT = 0, radioT = 4;
+let visT = 0, radioT = 4, sigT = 0;
+// Funktext passend zum bekannten Modus des Verdächtigen (Fahrzeug / zu Fuß)
+function suspectRadio(lost) {
+  const car = lastSeen.car && cars.includes(lastSeen.car) ? lastSeen.car : null, d = districtOf(lastSeen.x, lastSeen.z);
+  const base = (lost ? LINES.radioLost : LINES.radio).filter(l => car ? !/zu Fuß/.test(l) : !/fährt|Fahrbahn|Hindernis|rammt|Kurve|Absperrung|Straßensperre|Hubschrauber|Fahrzeug/.test(l));
+  const mode = car ? (lost ? [`Wir suchen einen ${colName(car.color || '#888')}en ${CAR_NAME[car.type] || 'Wagen'} in ${d}.`, `Achtet auf ${carDesc(car)}, zuletzt in ${d} gesehen.`] : [`Verdächtiger weiter in ${carDesc(car)}, Verfolgung läuft.`, `Wir sind hinter ${carDesc(car)}, Richtung ${d}.`])
+    : (lost ? [`Verdächtiger zu Fuß in ${d} verloren, Gebiet wird abgesucht.`, `Fußstreifen nach ${d}, Verdächtiger war zu Fuß.`] : ['Verdächtiger zu Fuß, Einheiten steigen aus.', `Verdächtiger rennt zu Fuß durch ${d}.`]);
+  return pick(base.concat(mode, mode));
+}
 function updateWanted(dt) {
   if (wanted <= 0) return;
+  sigT -= dt;
   let copsNear = false;
   visT -= dt;
   if (visT <= 0) {
     visT = 0.2; let seen = false;
     for (const c of cars) if (c.mode === 'police') { c.sees = copSees(c); seen = seen || c.sees; if (Math.hypot(c.x - player.x, c.z - player.z) < 260) copsNear = true; }
     for (const o of officers) if (o.state !== 'dead') { seen = seen || o.sees; copsNear = true; }
-    const tgt = player.car || player;
-    if (seen) { if (wantedCool > 3) radioT = Math.min(radioT, 0.5); wantedCool = 0; lastSeen.x = tgt.x; lastSeen.z = tgt.z; lastSeen.foot = !player.car; lastSeen.car = player.car; lastSeen.bld = INT.inside ? INT.b : null; }
+    const veh = playerVeh(), tgt = veh || player;
+    if (seen) {
+      if (wantedCool > 3) radioT = Math.min(radioT, 0.5); wantedCool = 0; lastSeen.x = tgt.x; lastSeen.z = tgt.z; lastSeen.foot = !veh; lastSeen.car = veh; lastSeen.bld = INT.inside ? INT.b : null;
+      // Moduswechsel (Fahrzeug / zu Fuß) im Sichtfeld: Funkdurchsage
+      const sg = veh || (INT.inside ? 'bld' : 'foot');
+      if (sg !== lastSeen.sig) {
+        const old = lastSeen.sig; lastSeen.sig = sg;
+        if (sg !== 'bld' && sigT <= 0) { sigT = 5; say(veh ? (old ? `Verdächtiger wechselt das Fahrzeug, jetzt in ${carDesc(veh)}.` : `Verdächtiger in ${carDesc(veh)}.`) : (old ? 'Verdächtiger ist ausgestiegen und flüchtet zu Fuß.' : 'Verdächtiger zu Fuß, Sichtkontakt.'), { who: 'Polizeifunk', radio: true, color: '#6fa8ff', prio: true }); }
+      }
+    }
     else if (copsNear || wantedCool > 0) wantedCool += squad.cops.length && INT.inside && squad.b === INT.b ? 0.07 : 0.2;
   }
   // Polizeifunk
   radioT -= dt;
-  if (radioT < 0) { radioT = rnd(8, 13); say(wantedCool > 2 ? pick(LINES.radioLost) : pick(LINES.radio), { who: 'Polizeifunk', color: '#6fa8ff', pitch: 0.7, rate: 1.15, vol: 0.7, radio: true }); }
+  if (radioT < 0) { radioT = rnd(8, 13); say(suspectRadio(wantedCool > 2), { who: 'Polizeifunk', color: '#6fa8ff', pitch: 0.7, rate: 1.15, vol: 0.7, radio: true }); }
   if (wantedCool > 9 + wanted * 3) escapeWanted();
 }
 function escapeWanted() {
-  const w = wanted; wanted = 0; wantedCool = 0;
+  const w = wanted; wanted = 0; wantedCool = 0; lastSeen.car = null; lastSeen.foot = false; lastSeen.bld = null; lastSeen.sig = null;
   player.respect += w * 5;
   banner('VERFOLGER ABGEHÄNGT!', `RESPEKT +${w * 5}%   ·   ${w} STERN${w > 1 ? 'E' : ''} WEG`);
   sfx.jingle();
@@ -5811,7 +6107,7 @@ async function boot() {
   for (let i = 0; i < 18; i++) spawnParked(15, 230);
   for (let i = 0; i < 50; i++) spawnPed(6, 130);
   worldReady = true;
-  window.__game = { get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, knockPlayer, jailReset, get navRoute() { return navRoute; }, holdItem, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get hail() { return hail; }, get uiMenu() { return uiMenu; }, get pendingCall() { return pendingCall; }, respawn, carStep, groundH, doorPoint, seatLocal, carLocal, get seq() { return seq; }, enterCar, exitCar, inCab, get phone() { return phone; } };
+  window.__game = { camStep(dt) { updateCamera(dt); }, dbgSolids(x, z, r) { const o = [], seen = new Set(); for (let cx = Math.floor((x - r) / CELL); cx <= Math.floor((x + r) / CELL); cx++) for (let cz = Math.floor((z - r) / CELL); cz <= Math.floor((z + r) / CELL); cz++) for (const s of solids.get(ckey(cx, cz)) || []) if (!seen.has(s) && s.maxx > x - r && s.minx < x + r && s.maxz > z - r && s.minz < z + r) { seen.add(s); o.push([s.minx, s.maxx, s.minz, s.maxz, s.h, s.y0]); } return o; }, get camYaw() { return camYaw; }, set camYaw(v) { camYaw = v; }, deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, knockPlayer, jailReset, get navRoute() { return navRoute; }, holdItem, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get hail() { return hail; }, get uiMenu() { return uiMenu; }, get pendingCall() { return pendingCall; }, respawn, carStep, groundH, doorPoint, seatLocal, carLocal, get seq() { return seq; }, enterCar, exitCar, inCab, get phone() { return phone; } };
   progress(0.9, CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase() + ' wird geweckt …'); await nextFrame();
   progress(0.95, 'Shader werden kompiliert …'); await nextFrame();
   updateCamera(0.016);
