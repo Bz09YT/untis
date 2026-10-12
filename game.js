@@ -45,13 +45,13 @@ const QUALITY = [
   ['Standard', () => dpr], ['Hoch', () => Math.max(dpr, 1.5)],
   ['Ultra HD (2x Supersampling)', () => Math.max(dpr, 2)], ['Maximum (3x Supersampling)', () => Math.max(dpr, 3)],
 ];
-let qIdx = 2;
+let qIdx = 0;
 function applySize() {
   const w = innerWidth, h = innerHeight;
   const ratio = Math.min(QUALITY[qIdx][1](), 8192 / Math.max(w, h));
   renderer.setPixelRatio(ratio);
   renderer.setSize(w, h, false);
-  if (composer) { composer.setPixelRatio(ratio); composer.setSize(w, h); if (aoPass) aoPass.enabled = qIdx >= 2; }
+  if (composer) { composer.setPixelRatio(ratio); composer.setSize(w, h); if (aoPass) aoPass.enabled = qIdx >= 3; }
   camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 // Nachbearbeitung: Bloom + Farbkorrektur (warmes Kalifornien-Licht, Sättigung, Vignette)
@@ -868,12 +868,12 @@ function buildMarkings() {
 function palmGeo(lean, fronds) {
   const parts = []; let x = 0, y = 0, ang = 0;
   for (let k = 0; k < 9; k++) {
-    const r0 = 0.21 - k * 0.009, seg = new THREE.CylinderGeometry(r0 - 0.012, r0, 1.06, 8, 1);
+    const r0 = 0.21 - k * 0.009, seg = new THREE.CylinderGeometry(r0 - 0.012, r0, 1.06, 6, 1, true);
     seg.translate(0, 0.52, 0); seg.rotateZ(-ang); seg.translate(x, y, 0); parts.push(colorize(seg, k % 2 ? '#7d6448' : '#8f7556'));
     x += Math.sin(ang); y += Math.cos(ang); ang += lean;
   }
   for (let f = 0; f < fronds; f++) {
-    const fr = new THREE.PlaneGeometry(1.0, 1, 1, 8), p = fr.attributes.position;
+    const fr = new THREE.PlaneGeometry(1.0, 1, 1, 5), p = fr.attributes.position;
     for (let i = 0; i < p.count; i++) {
       const t = p.getY(i) + 0.5, wd = p.getX(i) * Math.sin(Math.PI * Math.min(1, t * 1.15)) * (1.15 - t * 0.5);
       p.setXYZ(i, wd, Math.sin(t * Math.PI * 0.55) * 1.1 - t * t * 2.7, 4.2 * t);
@@ -881,7 +881,7 @@ function palmGeo(lean, fronds) {
     fr.computeVertexNormals(); fr.rotateY(f / fronds * Math.PI * 2 + rnd(-0.2, 0.2)); fr.translate(x, y, 0);
     parts.push(colorize(fr, pick(['#3f6e2a', '#4a7a30', '#5a8a38', '#3a5f28', '#6a8a3a'])));
   }
-  parts.push(colorize(new THREE.SphereGeometry(0.32, 8, 6).translate(x, y - 0.2, 0), '#5a4a2a'));
+  parts.push(colorize(new THREE.SphereGeometry(0.32, 6, 4).translate(x, y - 0.2, 0), '#5a4a2a'));
   return mergeGeometries(parts.map(g => g.index ? g.toNonIndexed() : g));
 }
 // Ampeln an allen Kreuzungen
@@ -897,7 +897,7 @@ function buildTrafficLights() {
   }
   const poleG = new THREE.CylinderGeometry(0.08, 0.1, 4.6, 6); poleG.translate(0, 2.3, 0);
   const headG = new THREE.BoxGeometry(0.35, 1.0, 0.3); headG.translate(0, 4.2, 0.15);
-  const lampG = new THREE.SphereGeometry(0.1, 8, 6); lampG.translate(0, 4.2, 0.32);
+  const lampG = new THREE.SphereGeometry(0.1, 6, 4); lampG.translate(0, 4.2, 0.32);
   const pole = new THREE.InstancedMesh(poleG, mat('#2d3035', { metalness: 0.5, roughness: 0.5 }), spots.length);
   const head = new THREE.InstancedMesh(headG, mat('#1e2024'), spots.length);
   const lampM = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2.2, toneMapped: true });
@@ -929,7 +929,7 @@ function buildProps() {
   });
   trees.length = 0; trees.push(...leafy);
   const trunkG = new THREE.CylinderGeometry(0.16, 0.24, 3, 7); trunkG.translate(0, 1.5, 0);
-  const leafG = new THREE.IcosahedronGeometry(2.1, 4); { const p = leafG.attributes.position; for (let i = 0; i < p.count; i++) { const k = 1 + (Math.sin(p.getX(i) * 3.1) * Math.cos(p.getZ(i) * 2.7) + Math.sin(p.getY(i) * 4.3)) * 0.07; p.setXYZ(i, p.getX(i) * k, p.getY(i) * k * 0.9, p.getZ(i) * k); } leafG.computeVertexNormals(); } leafG.translate(0, 4.4, 0);
+  const leafG = new THREE.IcosahedronGeometry(2.1, 3); { const p = leafG.attributes.position; for (let i = 0; i < p.count; i++) { const k = 1 + (Math.sin(p.getX(i) * 3.1) * Math.cos(p.getZ(i) * 2.7) + Math.sin(p.getY(i) * 4.3)) * 0.07; p.setXYZ(i, p.getX(i) * k, p.getY(i) * k * 0.9, p.getZ(i) * k); } leafG.computeVertexNormals(); } leafG.translate(0, 4.4, 0);
   const trunk = new THREE.InstancedMesh(trunkG, mat('#5a4030'), trees.length);
   const leaf = new THREE.InstancedMesh(leafG, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }), trees.length);
   const col = new THREE.Color();
@@ -968,7 +968,7 @@ function buildProps() {
     if (i % 3 === 1 && Math.random() < 0.55) hyd.push([x + t[0] * 3.2, z + t[1] * 3.2]);
     if (i % 9 === 4 && Math.random() < 0.6) vend.push([x - t[0] * 2.4 - f[0] * 0.55, z - t[1] * 2.4 - f[1] * 0.55, f, Math.random() < 0.5 ? 'Sprunk' : 'eCola']);
   });
-  const hG = mergeGeometries([new THREE.CylinderGeometry(0.15, 0.17, 0.62, 10).translate(0, 0.31, 0), new THREE.SphereGeometry(0.15, 10, 6).translate(0, 0.62, 0), new THREE.CylinderGeometry(0.06, 0.06, 0.42, 6).rotateZ(Math.PI / 2).translate(0, 0.42, 0)].map(g => g.index ? g.toNonIndexed() : g));
+  const hG = mergeGeometries([new THREE.CylinderGeometry(0.15, 0.17, 0.62, 7).translate(0, 0.31, 0), new THREE.SphereGeometry(0.15, 7, 4).translate(0, 0.62, 0), new THREE.CylinderGeometry(0.06, 0.06, 0.42, 6).rotateZ(Math.PI / 2).translate(0, 0.42, 0)].map(g => g.index ? g.toNonIndexed() : g));
   const hM = new THREE.InstancedMesh(hG, mat('#b8261c', { roughness: 0.5, metalness: 0.3 }), Math.max(1, hyd.length));
   hyd.forEach(([x, z], k) => { dummy.position.set(x, 0.2, z); dummy.rotation.set(0, 0, 0); dummy.updateMatrix(); hM.setMatrixAt(k, dummy.matrix); const so = addSolid(x - 0.2, x + 0.2, z - 0.2, z + 0.2, 0.8); addKnock({ kind: 'hyd', x, z, rot: 0, h: 0.8, so, inst: [[hM, k, 0]] }); });
   hM.count = hyd.length; hM.castShadow = true; scene.add(hM);
@@ -1491,8 +1491,8 @@ function updatePeds(dt) {
       if (p.task?.bench) p.task.bench.occ = null;
       scene.remove(p.h.group); disposeHuman(p.h); peds.splice(i, 1); continue;
     }
-    setHumanShadow(p.h, dist < 40);
-    p.h.group.visible = dist < 140;
+    setHumanShadow(p.h, dist < 25);
+    p.h.group.visible = dist < 85; p.h.lod = dist > 45 ? 3 : dist > 25 ? 2 : 1;
     if (p.state === 'fly') { updatePed(p, dt, dist); continue; }
     if (p.state !== 'dead') {
       updatePed(p, dt, dist);
@@ -1862,7 +1862,7 @@ function buildFloor(f) {
     const q = rooms[player.hotel.room % rooms.length], bed = spots.find(sp => sp.type === 'bed' && sp.room === q);
     if (bed) { const mk = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.2, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false })); mk.position.set(q.inPt[0], 0.6, q.inPt[1]); g.add(mk); F.hotelBed = { x: q.inPt[0], z: q.inPt[1] }; }
   }
-  populateFloor(F);
+  F.deferQ = []; populateFloor(F); const q0 = F.deferQ; F.deferQ = null; F.spawnQ = q0;
   return F;
 }
 function unloadFloor(F) {
@@ -1925,9 +1925,9 @@ function syncFloors() {
   const C = INT.cab, ride = C && !player.car && inCab() && (C.state === 'moving' || C.state === 'closing');
   const fc = ride ? C.target : INT.inside ? curFloorOf(player.y) : 0; INT.fc = fc;
   const ok = f => f >= 0 && f < (INT.b.small ? 1 : INT.b.floors);
-  const want = new Set((ride ? [C.floor0 ?? C.floor, C.target, C.target - 1, C.target + 1] : [fc - 1, fc, fc + 1]).filter(ok));
+  const want = new Set((ride ? [C.floor0 ?? C.floor, C.target, C.target - 1, C.target + 1] : INT.inside ? [fc - 1, fc, fc + 1] : [0]).filter(ok));
   for (const [f, F] of [...INT.floors]) if (!want.has(f)) unloadFloor(F);
-  for (const f of [fc, ...want]) if (!INT.floors.has(f)) { INT.floors.set(f, buildFloor(f)); if (ride) break; }
+  for (const f of [fc, ...want]) if (want.has(f) && !INT.floors.has(f)) { INT.floors.set(f, buildFloor(f)); break; }
   INT.kind = INT.floors.get(fc)?.kind || '';
   const W = INT.W, D = INT.D;
   INT.lights.forEach((l, i) => { const [x, z] = toWorld((i % 2 ? 1 : -1) * W / 4, (i < 2 ? -1 : 1) * D / 4); l.position.set(x, floorY(fc) + 3.0, z); });
@@ -1965,20 +1965,22 @@ function updateBuildings(dt) {
   }
   if (INT.checkT <= 0) {
     INT.checkT = 0.25;
-    if (!INT.active) { if (!player.car && !player.dead) { const b = nearestDoor(player.x, player.z, 32); if (b) activateBuilding(b); } }
+    if (!INT.active) { if (!player.car && !player.dead) { const b = nearestDoor(player.x, player.z, 24); if (b) activateBuilding(b); } }
     else if (!INT.inside) {
       const d = INT.b.door, dd = Math.hypot(d.x - player.x, d.z - player.z);
-      const nb = !player.car && nearestDoor(player.x, player.z, 32);
-      if (dd > 44 || player.car || (nb && nb !== INT.b && Math.hypot(nb.door.x - player.x, nb.door.z - player.z) < dd - 9)) deactivateBuilding();
+      const nb = !player.car && nearestDoor(player.x, player.z, 24);
+      if (dd > 36 || player.car || (nb && nb !== INT.b && Math.hypot(nb.door.x - player.x, nb.door.z - player.z) < dd - 9)) deactivateBuilding();
     }
     if (INT.active) syncFloors();
   }
   if (!INT.active) return;
   if (INT.cab) updateCab(dt);
+  for (const F of INT.floors.values()) if (F.spawnQ?.length) { const [role, sp, look] = F.spawnQ.shift(); if (sp.occ === 'pending') sp.occ = null; spawnINpc(F, role, sp, look); break; }
   updateInterior(dt);
 }
 // ---------- Innen-NPCs ----------
 function spawnINpc(F, role, s, look) {
+  if (F.deferQ) { F.deferQ.push([role, s, look]); s.occ = s.multi ? null : 'pending'; return null; }
   const L = look || (['worker', 'reception', 'visitor', 'cop'].includes(role) ? officeLook() : pedLook()), h = makeHuman(L);
   setHumanShadow(h, false); F.group.add(h.group);
   const [voice, vrate] = voiceFor(L);
@@ -4018,7 +4020,7 @@ function updateCars(dt, time) {
     const d = Math.hypot(c.x - player.x, c.z - player.z);
     if ((c.mode === 'ai' || c.mode === 'police') && !c.driver && d < 70) { setDriver(c, makeHuman(c.dlook ||= c.type === 'police' ? COP_LOOK : pedLook())); c.lazyDriver = true; }
     if (c.driver && c.lazyDriver && c.driver !== player.h && d > 95) { const h = c.driver; c.body.remove(h.group); disposeHuman(h); c.driver = null; }
-    if (c.driver && c.driver !== player.h && d < 80) animHuman(c.driver, 0, dt, false, 'drive');
+    if (c.driver && c.driver !== player.h) { c.driver.group.visible = d < 60; if (d < 60) animHuman(c.driver, 0, dt, false, 'drive'); }
     if (c.npcSeq) updateNpcSeq(c, dt);
     syncCar(c);
     c.group.visible = d < 600;
@@ -4147,7 +4149,7 @@ function buildStructures() {
 
 // ---------- Loop ----------
 const clock = new THREE.Clock();
-let lastEnv = 0, mapT = 0, worldReady = false, qCeil = qIdx, fpsT = 0, fpsN = 0;
+let lastEnv = 0, mapT = 0, worldReady = false, qCeil = 2, fpsT = 0, fpsN = 0, lastQUp = 0;
 function simulate(dt, raw, raw0, time) {
   gameMin = (gameMin + dt * 0.5) % 1440;
   if (switching) updateSwitch(raw); else updatePlayer(dt, raw);
@@ -4163,7 +4165,11 @@ function simulate(dt, raw, raw0, time) {
   const hm = HOMES[CHARS[cur].home]; if (hm) { hm.marker.scale.y = 1 + Math.sin(time * 3) * 0.15; hm.marker.material.opacity = 0.3 + Math.sin(time * 3) * 0.1; }
   // Dynamische Auflösung: bei zu wenig FPS automatisch eine Stufe runter
   fpsT += raw0; fpsN++;
-  if (fpsT > 3) { const fps = fpsN / fpsT; fpsT = 0; fpsN = 0; if (fps < 24 && qIdx > 0) { qIdx--; applySize(); notice('Auflösung automatisch angepasst: ' + QUALITY[qIdx][0], 2200); } }
+  if (fpsT > 4) {
+    const fps = fpsN / fpsT; fpsT = 0; fpsN = 0;
+    if (fps < 30 && qIdx > 0) { qIdx--; qCeil = qIdx; applySize(); notice('Auflösung automatisch angepasst: ' + QUALITY[qIdx][0], 2200); }
+    else if (fps > 58 && qIdx < Math.min(qCeil, 2) && performance.now() - lastQUp > 15000) { qIdx++; lastQUp = performance.now(); applySize(); }
+  }
 }
 function frame() {
   requestAnimationFrame(frame);
@@ -4221,7 +4227,7 @@ async function boot() {
   for (let i = 0; i < 18; i++) spawnParked(15, 230);
   for (let i = 0; i < 50; i++) spawnPed(6, 130);
   worldReady = true;
-  window.__game = { player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get phone() { return phone; } };
+  window.__game = { deactivateBuilding, renderer, scene, camera, get composer() { return composer; }, player, cars, peds, CHARS, switchChar, die, escapeWanted, INT, BUILDINGS, activateBuilding, callCab, interiorUse, curFloorOf, get cur() { return cur; }, get wanted() { return wanted; }, set wanted(v) { wanted = v; }, set time(v) { gameMin = v; }, step(n) { for (let i = 0; i < n; i++) simulate(0.05, 0.05, 0, clock.elapsedTime); }, get cool() { return wantedCool; }, requestRide, boardRide, setWaypoint, openElevator, KNOCK, VENDS, sigState, vendMenu, busted, get PRISON() { return PRISON; }, squad, officers, lastSeen, addWanted, openPhone, phoneKey, bankMenu, get ride() { return ride; }, get phone() { return phone; } };
   progress(0.9, CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase() + ' wird geweckt …'); await nextFrame();
   progress(0.95, 'Shader werden kompiliert …'); await nextFrame();
   updateCamera(0.016);

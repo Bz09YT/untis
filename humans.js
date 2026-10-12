@@ -131,6 +131,9 @@ export function punchPose(h, k) { rot(h.B.RightArm, 40 + k * 45, 0, -75); rot(h.
 
 // speed in m/s; pose optional (sit, type, phone, talk, …)
 export function animHuman(h, speed, dt, aiming = false, pose = null, sneak = false) {
+  // LOD: weit entfernte Figuren nur jeden 2./3. Frame animieren (Zeit wird aufsummiert)
+  if (h.lod > 1) { h.lacc = (h.lacc || 0) + dt; if ((h.lf = (h.lf || 0) + 1) % h.lod) return; dt = h.lacc; h.lacc = 0; }
+  if (!h.group.visible) return;
   h.t += dt;
   const W = h.w, run = speed > 4.5;
   const tw = { idle: 0, walk: 0, run: 0, sneak: 0, agree: 0, shake: 0 };
