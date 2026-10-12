@@ -47,7 +47,9 @@ function prepModel(name, root) {
   root.updateMatrixWorld(true);
   const bb = new THREE.Box3().setFromObject(root), c = bb.getCenter(new THREE.Vector3());
   root.userData.size = bb.getSize(new THREE.Vector3());
-  root.userData.offset = new THREE.Vector3(-c.x, -bb.min.y, -c.z);
+  // Boxen quantisierter Modelle (CarConcept) sind zu groß -> Auto schwebte 1,3 m: Aufstandshöhe aus den echten Vertices bestimmen
+  const pmin = new THREE.Box3().setFromObject(root, true).min.y;
+  root.userData.offset = new THREE.Vector3(-c.x, -(Number.isFinite(pmin) ? pmin : bb.min.y), -c.z);
   // Teure Physical-Erweiterungen (Transmission, Sheen, Iridescence …) ersetzen: sie rendern die Szene pro Frame erneut und lassen das Bild beim Einsteigen hängen
   let tris = 0;
   root.traverse(o => {

@@ -138,11 +138,11 @@ export function buildAirliner(opt = {}) {
 }
 
 // ---------- Business-Jet ----------
-export const BIZJET = { L: 19, R: 1.12, AH: 2.55, FY: 2.05, doorZ: -6.3 };
+export const BIZJET = { L: 19, R: 1.35, AH: 2.15, FY: 1.55, doorZ: -6.3 };
 export function buildBizjet(opt = {}) {
   const { L, R, AH } = BIZJET, grp = new THREE.Group(), body = new THREE.Group(); body.position.y = AH; grp.add(body);
   const t0 = (BIZJET.doorZ - 0.55 + L / 2) / L, t1 = (BIZJET.doorZ + 0.55 + L / 2) / L;
-  const hull = new THREE.Mesh(fuselageGeo(L, R, opt.door ? { t0, t1, a0: 255, a1: 300 } : null),
+  const hull = new THREE.Mesh(fuselageGeo(L, R, opt.door ? { t0, t1, a0: 240, a1: 300 } : null),
     new THREE.MeshStandardMaterial({ map: liveryTex({ body: opt.body || '#f6f6f2', stripe: opt.stripe || '#222a36', stripe2: '#c9a24a', name: opt.name || 'LS JETS', text: '#222a36' }), roughness: 0.3, metalness: 0.3 }));
   hull.castShadow = true; hull.receiveShadow = true; body.add(hull);
   const B = new Batch(), W = '#eceef0', col = opt.tail || '#222a36';
@@ -169,7 +169,7 @@ export function buildBizjet(opt = {}) {
 
 // ---------- Kabineninnenraum (Liner mit Fensterlöchern, Boden, Sitze, Gepäckfächer) ----------
 export function buildCabin(kind) {
-  const jet = kind === 'jet', cfg = jet ? { L: 12.5, z0: -4.2, R: 1.06, FY: -0.5, rows: 4, pitch: 1.5, win: 0.2 } : { L: 31, z0: -15.8, R: 1.94, FY: -0.5, rows: 24, pitch: 0.82, win: 0.28 };
+  const jet = kind === 'jet', cfg = jet ? { L: 12.5, z0: -4.2, R: 1.3, FY: -0.6, rows: 4, pitch: 1.5, win: 0.2 } : { L: 31, z0: -15.8, R: 1.94, FY: -0.5, rows: 24, pitch: 0.82, win: 0.28 };
   const g = new THREE.Group(), z1 = cfg.z0 + cfg.L, R = cfg.R;
   // Liner (Innenseite) mit Alpha-Fenstern
   const rows = jet ? 5 : cfg.rows + 2, winZ = []; for (let i = 0; i < rows; i++) winZ.push(cfg.z0 + (jet ? 1.4 + i * 1.8 : 3.6 + i * cfg.pitch));
@@ -196,7 +196,7 @@ export function buildCabin(kind) {
   B.box('v', R * 1.9, 2.6, 0.1, 0, fy + 1.3, cfg.z0 + 0.05, '#cfcac0'); B.box('v', R * 1.9, 2.6, 0.1, 0, fy + 1.3, z1 - 0.05, '#cfcac0');
   const seatCol = jet ? '#b6894e' : '#2f4f8a';
   const seat = (x, z, big) => {
-    const w = big ? 0.8 : 0.46, sc = big ? '#b6894e' : seatCol;
+    const w = big ? 0.6 : 0.46, sc = big ? '#b6894e' : seatCol;
     B.box('v', w, 0.12, big ? 0.7 : 0.46, x, fy + (big ? 0.42 : 0.4), z, sc);
     B.box('v', w, big ? 0.85 : 0.65, 0.12, x, fy + (big ? 0.82 : 0.75), z + (big ? 0.34 : 0.22), sc);
     B.box('v', w * 0.5, 0.18, 0.1, x, fy + (big ? 1.3 : 1.12), z + (big ? 0.34 : 0.22), jet ? '#8e6a38' : '#d8dde5');
@@ -204,12 +204,12 @@ export function buildCabin(kind) {
   };
   const seats = [];
   if (jet) {
-    for (let r = 0; r < 3; r++) for (const sx of [-0.85, 0.85]) { const z = cfg.z0 + 2.4 + r * 2.2; seat(sx, z, true); seats.push({ x: sx, z, y: fy, side: sx < 0 ? -1 : 1 }); }
+    for (let r = 0; r < 3; r++) for (const sx of [-0.78, 0.78]) { const z = cfg.z0 + 2.4 + r * 2.2; seat(sx, z, true); seats.push({ x: sx, z, y: fy, side: sx < 0 ? -1 : 1 }); }
     B.box('v', 0.5, 0.05, 0.9, -0.85, fy + 0.7, cfg.z0 + 3.5, '#4a2e18'); // Tischchen
     B.box('v', 0.9, 0.4, 1.8, 0.5, fy + 0.2, z1 - 1.3, '#d9d2c4'); // Sofa-Block hinten
     B.box('v', 0.9, 0.6, 0.2, 0.5, fy + 0.7, z1 - 0.5, '#c8c0b0');
   } else {
-    for (let r = 0; r < cfg.rows; r++) { const z = cfg.z0 + 3.2 + r * cfg.pitch; for (const sx of [-1.38, -0.9, -0.42, 0.42, 0.9, 1.38]) { seat(sx, z); seats.push({ x: sx, z, y: fy, side: sx < 0 ? -1 : 1, win: Math.abs(sx) > 1.3 }); } }
+    for (let r = 0; r < cfg.rows; r++) { const z = cfg.z0 + 3.2 + r * cfg.pitch; for (const sx of [-1.5, -1.04, -0.58, 0.58, 1.04, 1.5]) { seat(sx, z); seats.push({ x: sx, z, y: fy, side: sx < 0 ? -1 : 1, win: Math.abs(sx) > 1.4 }); } }
     for (const sd of [-1, 1]) { B.box('v', 0.5, 0.5, cfg.L - 5, sd * 1.5, fy + 2.0, cfg.z0 + cfg.L / 2 + 1, '#dedad2'); } // Gepäckfächer
   }
   B.build(g, { v: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }) });
@@ -223,3 +223,10 @@ export function jetBridgeMesh(len) { // Tunnel entlang +x, Start bei x=0
   B.build(g, { v: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2 }) });
   return g;
 }
+
+// ---------- Weltkonstanten ----------
+export const LS = {
+  T: { x0: 760, x1: 850, z0: -130, z1: 130, H: 11 }, GATES: [-100, -50, 0, 50, 100], PX: 880, BR0: 850,
+  RWY: { x: 1030, z0: -560, z1: 440, w: 45 }, TWY: { x: 950, w: 23 }, FBO: { x0: 780, x1: 830, z0: -325, z1: -265 }, JX: 880, JZ: [-305, -285, -265],
+  SEC: { wallX: 804, laneZ: 0, trayX: 809, scanX: 817 },
+};
