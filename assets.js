@@ -47,13 +47,39 @@ function prepModel(name, root) {
   const bb = new THREE.Box3().setFromObject(root), c = bb.getCenter(new THREE.Vector3());
   root.userData.size = bb.getSize(new THREE.Vector3());
   root.userData.offset = new THREE.Vector3(-c.x, -bb.min.y, -c.z);
-  root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } if (o.isCamera || o.isLight) o.visible = false; });
+  // Teure Physical-Erweiterungen (Transmission, Sheen, Iridescence …) ersetzen: sie rendern die Szene pro Frame erneut und lassen das Bild beim Einsteigen hängen
+  let tris = 0;
+  root.traverse(o => {
+    if (o.isCamera || o.isLight) o.visible = false;
+    if (!o.isMesh) return;
+    tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
+    o.receiveShadow = true;
+    o.material = Array.isArray(o.material) ? o.material.map(lightMat) : lightMat(o.material);
+  });
+  // Sehr detaillierte Modelle werfen den Schatten über einen unsichtbaren Quader statt über jedes Dreieck
+  root.userData.heavy = tris > 40000;
+  root.traverse(o => { if (o.isMesh) o.castShadow = !root.userData.heavy; });
+}
+const lightCache = new Map();
+function lightMat(m) {
+  if (!m?.isMeshPhysicalMaterial || !(m.transmission > 0 || m.sheen > 0 || m.iridescence > 0 || m.thickness > 0 || m.dispersion > 0 || m.clearcoat > 0)) return m;
+  if (lightCache.has(m)) return lightCache.get(m);
+  const glass = m.transmission > 0;
+  const n = new THREE.MeshStandardMaterial({ name: m.name, color: m.color, map: m.map, normalMap: m.normalMap, roughnessMap: m.roughnessMap, metalnessMap: m.metalnessMap, aoMap: m.aoMap, emissive: m.emissive, emissiveMap: m.emissiveMap, alphaMap: m.alphaMap,
+    roughness: glass ? 0.05 : m.roughness, metalness: glass ? 0 : m.metalness, side: m.side, vertexColors: m.vertexColors, alphaTest: m.alphaTest,
+    transparent: glass || m.transparent, opacity: glass ? Math.min(m.opacity, 0.3) : m.opacity, depthWrite: glass ? false : m.depthWrite });
+  if (m.normalScale) n.normalScale.copy(m.normalScale);
+  lightCache.set(m, n); return n;
 }
 // Kopie eines Modells, auf Zielgröße skaliert (fit: 'x' Breite, 'y' Höhe, 'z' Länge)
 export function modelInstance(name, size, fit = 'y') {
   const src = ASSETS.models[name]; if (!src) return null;
   const s = size / src.userData.size[fit], wrap = new THREE.Group(), inner = src.clone(true);
   inner.position.copy(src.userData.offset); wrap.add(inner); wrap.scale.setScalar(s); wrap.userData.scale = s;
+  if (src.userData.heavy) {
+    const z = src.userData.size, box = new THREE.Mesh(new THREE.BoxGeometry(z.x * 0.92, z.y * 0.75, z.z * 0.95), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
+    box.position.y = z.y * 0.4; box.castShadow = true; wrap.add(box);
+  }
   return wrap;
 }
 // Textur aus geladenem Foto

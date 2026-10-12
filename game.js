@@ -4517,13 +4517,13 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyH') { showHelp = !showHelp; $('help').style.display = showHelp ? 'block' : 'none'; }
   if (e.code === 'KeyQ') { qIdx = (qIdx + 1) % QUALITY.length; qCeil = qIdx; applySize(); notice('Grafik: ' + QUALITY[qIdx][0], 1800); }
   if (e.code === 'KeyR' && player.car) sfx.radio();
-  if (['F2', 'F3', 'Tab', 'KeyM'].includes(e.code)) e.preventDefault();
+  if (['F3', 'Tab', 'KeyM'].includes(e.code)) e.preventDefault();
   if (bigMap.open) { if (e.code === 'KeyM' || e.code === 'Escape') closeMap(); return; }
   if (phone.open) { phoneKey(e.code); e.preventDefault(); return; }
   if (uiMenu) { menuKey(e.code); e.preventDefault(); return; }
   if (INT.menu) { elevatorKey(e.code); e.preventDefault(); return; }
   if (e.code === 'KeyM' && !player.dead) { openMap(); return; }
-  if (e.code === 'F2') { openPhone(); return; }
+  if (e.code === 'KeyP' && !phone.open) { openPhone(); return; }
   if (e.code === 'F3') { scannerOn = !scannerOn; scanT = 1.5; notice('Polizeifunk ' + (scannerOn ? 'AN – du hörst mit' : 'AUS'), 1600); sfx.squelch(); return; }
   if (e.code === 'Tab') { openWheel(); return; }
   if (e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'KeyC') { if (!player.car) { player.sneak = !player.sneak; notice(player.sneak ? 'Schleichen' : 'Normal', 800); } return; }
@@ -5200,7 +5200,7 @@ function updateScanner(dt) {
     say(line, { who: 'Polizeifunk', color: '#6fa8ff', pitch: 0.7, rate: 1.15, vol: 0.7, radio: true });
   }
 }
-// Handy (F2): Kontakte anrufen und Treffen vereinbaren
+// Handy (P): Kontakte anrufen und Treffen vereinbaren
 const phone = { open: false, screen: 'home', sel: 0, busy: false };
 let meeting = null;
 const EXTRA_CONTACTS = [
@@ -5246,7 +5246,7 @@ function renderPhone() {
   else if (phone.screen === 'ridestatus') body = rideStatusHTML();
   else if (phone.screen === 'bank') body = `<div class="ttl">Fleeca Mobile</div><div class="bank"><small>Girokonto</small><b>${fmt(player.bank || 0)}</b><small>Bargeld</small><b>${fmt(player.money)}</b></div><small class="ri">Ein- und Auszahlen am Geldautomaten oder am Schalter einer Fleeca-Filiale.</small>`;
   else if (phone.screen === 'call') body = `<div class="call"><i style="background:${phone.who.col}"></i><div>${phone.who.name}</div><small>${phone.status}</small></div>`;
-  el.innerHTML = `<div class="bar">${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} <span>LS-Mobil ▂▄▆</span></div>${body}<div class="hint">W/S · E wählen · F2/Rück zurück</div>`;
+  el.innerHTML = `<div class="bar">${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} <span>LS-Mobil ▂▄▆</span></div>${body}<div class="hint">W/S · E wählen · P/Rück zurück</div>`;
   if (phone.screen === 'ridestatus') drawRideMap();
 }
 function openPhone() { if (player.dead || switching) return; phone.open = true; phone.screen = 'home'; phone.sel = 0; $('phone').style.display = 'block'; renderPhone(); sfx.click(); }
@@ -5258,7 +5258,7 @@ function phoneKey(code) {
   else if (code === 'KeyS' || code === 'ArrowDown') phone.sel = (phone.sel + (phone.screen === 'home' ? 2 : 1)) % Math.max(1, list.length);
   else if (code === 'KeyA' || code === 'ArrowLeft') phone.sel = Math.max(0, phone.sel - 1);
   else if (code === 'KeyD' || code === 'ArrowRight') phone.sel = Math.min(list.length - 1, phone.sel + 1);
-  else if (code === 'Backspace' || code === 'F2') { if (phone.screen === 'home') return closePhone(); phone.screen = 'home'; phone.sel = 0; }
+  else if (code === 'Backspace' || code === 'KeyP') { if (phone.screen === 'home') return closePhone(); phone.screen = 'home'; phone.sel = 0; }
   else if (code === 'KeyE' || code === 'Enter') {
     if (phone.screen === 'home') {
       const a = list[phone.sel].id;
@@ -5770,8 +5770,12 @@ async function boot() {
   updateCamera(0.016);
   setupPost();
   renderSatellite();
+  // Auto-Modelle einmal vorkompilieren, damit das erste Einsteigen nicht an Shader-Kompilierung hängt
+  const pre = [];
+  for (const n of ['ferrari', 'CarConcept']) { const mi = modelInstance(n, 4.5, 'z'); if (!mi) continue; cgTintModel(mi, n, '#3366aa'); mi.position.set(camera.position.x, camera.position.y - 2, camera.position.z - 6); scene.add(mi); pre.push(mi); }
   renderer.compile(scene, camera);
   composer.render();
+  for (const mi of pre) scene.remove(mi);
   const t0 = performance.now(); while (performance.now() - t0 < 900) { await nextFrame(); }
   progress(1, loaded ? 'Spielstand geladen. Bereit.' : 'Bereit.');
   $('start').style.display = 'block';
