@@ -6174,7 +6174,7 @@ async function boot() {
     restoreSolid: s => { for (let cx = Math.floor(s.minx / CELL); cx <= Math.floor(s.maxx / CELL); cx++) for (let cz = Math.floor(s.minz / CELL); cz <= Math.floor(s.maxz / CELL); cz++) { const k = ckey(cx, cz); if (!solids.has(k)) solids.set(k, []); solids.get(k).push(s); } },
     getGameMin: () => gameMin, addGameMin: v => { gameMin = (gameMin + v) % 1440; }, getWanted: () => wanted, clearWanted: () => { if (wanted > 0) escapeWanted(); },
     getWeapon: () => weapon, setWeapon: v => { weapon = v; }, charName: () => CHARS[cur].name[0] + CHARS[cur].name.slice(1).toLowerCase(),
-    closePhone, getCamYaw: () => camYaw, camReset: yaw => { camYaw = yaw + Math.PI; camPitch = 0.25; }, skyFollow: () => skyDome.position.copy(camera.position),
+    bloom: () => bloomPass, closePhone, getCamYaw: () => camYaw, camReset: yaw => { camYaw = yaw + Math.PI; camPitch = 0.25; }, skyFollow: () => skyDome.position.copy(camera.position),
   });
   AIR.afterLoad();
   camYaw = player.yaw + 0.5;

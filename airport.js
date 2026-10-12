@@ -198,7 +198,7 @@ export function initAirport(ctx) {
       if (pDist(PL.position.x - 3.5, PL.position.z - 12.6) < 1.5 && player.y > 3) return null;
     } else {
       const Yd = S.yk;
-      if (Yd && pDist(14995.6, YK.bz + 3.5) < 2.4) return { hint: `Gate G1 · Drücke <b>E</b>: Bordkarte scannen`, act: () => gateScanYK() };
+      if (Yd && pDist(14993.5, YK.bz + 4.2) < 3.6) return { hint: `Gate G1 · Drücke <b>E</b>: Bordkarte scannen`, act: () => gateScanYK() };
       if (Yd && pDist(YK.bed.x, YK.bed.z - 2.5) < 2.5) return { hint: 'Drücke <b>E</b>: Im Bett ausruhen & speichern', act: restYK };
       if (player.y > 3) { const sg = SEAT(); if (Math.abs(pz - sg.z) < 1.0 && Math.abs(px - (PL.position.x - 0.35)) < 1.2) return { hint: `Drücke <b>E</b>: Platz ${t?.seat || '14A'} einnehmen`, act: sitDown }; }
     }
@@ -300,7 +300,7 @@ export function initAirport(ctx) {
   }
   const capEl = () => barsEl.querySelector('#aircap'), fadeEl = () => barsEl.querySelector('#airfade');
   function buildPath(site, gz) {
-    const pts = [[site.px, gz], [site.px, gz + 35], [site.px + 12, site.cz - 40], [site.taxX, site.cz - 6], [site.taxX + (site.rwyX - site.taxX) * 0.6, site.cz], [site.rwyX - 14, site.cz - 5], [site.rwyX, site.cz - 32], [site.rwyX, site.cz - 75]];
+    const pts = site.jet ? [[site.px, gz], [site.px + 20, gz + 4], [site.taxX - 12, gz + 18], [site.taxX, gz + 50], [site.taxX, site.cz - 60], [site.taxX + 6, site.cz - 18], [site.taxX + (site.rwyX - site.taxX) * 0.6, site.cz], [site.rwyX - 14, site.cz - 5], [site.rwyX, site.cz - 32], [site.rwyX, site.cz - 75]] : [[site.px, gz], [site.px, gz + 35], [site.px + 12, site.cz - 40], [site.taxX, site.cz - 6], [site.taxX + (site.rwyX - site.taxX) * 0.6, site.cz], [site.rwyX - 14, site.cz - 5], [site.rwyX, site.cz - 32], [site.rwyX, site.cz - 75]];
     return new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(p[0], 0.05, p[1])), false, 'centripetal');
   }
   let cloudMesh = null;
@@ -339,11 +339,25 @@ export function initAirport(ctx) {
       F.rz -= 120 * dt; F.y += 6 * dt; g.rotation.x = lerp(g.rotation.x, 0.03, dt); g.position.set(F.rx, F.y, F.rz); cloudMesh.position.set(g.position.x, 260, g.position.z);
       if (F.t - F.t3 > 6) endFlight(F);
     }
-    // Kamera am Fensterplatz
+    // Kamera: Mix aus Fensterplatz (innen) und Außenkameras
     const body = g.userData.body, st = F.seat, ey = F.kind === 'air' ? 0.62 : 0.2;
-    camera.position.copy(body.localToWorld(V.set(st.x + 0.04, ey + 0.05, st.z + 0.1))); const sway = Math.sin(F.t * 1.3) * 0.01 + (F.phase === 'roll' ? Math.sin(F.t * 40) * 0.004 : 0);
-    camera.position.y += sway; body.localToWorld(V2.set(-6, ey - 0.45, st.z - 2.2 + Math.sin(F.t * 0.4) * 0.3)); camera.lookAt(V2);
-    camera.fov = 60; camera.updateProjectionMatrix();
+    let mode = 'win';
+    if (F.phase === 'taxi' && F.s > F.len * 0.3) mode = 'taxi';
+    else if (F.phase === 'roll') { if (F.rollZ0 === undefined) F.rollZ0 = F.rz; mode = !F.lift && F.rz > F.rollZ0 - 300 ? 'track' : 'chase'; }
+    else if (F.phase === 'climb') mode = F.y < 150 ? 'side' : 'win';
+    if (mode === 'win') {
+      camera.position.copy(body.localToWorld(V.set(st.x + 0.04, ey + 0.05, st.z + 0.1))); const sway = Math.sin(F.t * 1.3) * 0.01 + (F.phase === 'roll' ? Math.sin(F.t * 40) * 0.004 : 0);
+      camera.position.y += sway; body.localToWorld(V2.set(-6, ey - 0.45, st.z - 2.2 + Math.sin(F.t * 0.4) * 0.3)); camera.lookAt(V2); camera.fov = 60;
+    } else {
+      const big = F.kind === 'air' ? 1 : 0.6;
+      if (mode === 'track') { if (F.trkZ === undefined) F.trkZ = F.rz - 140; camera.position.set(F.site.rwyX + 42, 2.2, F.trkZ); }
+      else if (mode === 'taxi') { g.localToWorld(V.set(-24 * big, 4.5, -28 * big)); camera.position.copy(V); }
+      else if (mode === 'chase') { g.localToWorld(V.set(0, 6, 46 * big)); camera.position.copy(V); }
+      else { g.localToWorld(V.set(-38 * big, 5 + F.y * 0.05, 8)); camera.position.copy(V); }
+      V2.copy(g.position); V2.y += 3.5; camera.lookAt(V2); camera.fov = mode === 'track' ? 38 : 55;
+      if (mode === 'track') camera.fov = 30;
+    }
+    camera.updateProjectionMatrix();
     // Spieler sitzt mit
     const h = player.h; body.localToWorld(V.set(st.x, F.kind === 'air' ? -0.5 : -0.6, st.z)); h.group.position.copy(V); h.group.visible = false; h.group.rotation.set(0, g.rotation.y + Math.PI, 0); player.x = V.x; player.z = V.z; player.y = V.y;
     animHuman(h, 0, dt, false, 'sit');
@@ -361,13 +375,13 @@ export function initAirport(ctx) {
       g.rotation.set(0, 0, 0);
       if (F.kind === 'air') {
         if (dest === 'yk') { S.planeAt = 'yk'; ensureYK(); S.planeGate = 0; placePlane('yk'); } else { S.planeGate = Math.floor(Math.random() * 5); placePlane('ls'); }
-      } else { g.position.set(LS.JX, 0.05, LS.JZ[1]); }
+      } else { g.position.set(LS.JX, 0.05, LS.JZ[1]); if (dest === 'yk') placePlane('yk'); }
       resetGates(); resetSecurity();
       const a = dest === 'yk' ? (F.kind === 'jet' ? { x: 15040, z: 18 } : YK.arrive) : { x: 752, z: -4 };
       player.ticket = null; C.addGameMin(30); C.clearWanted?.();
       if (dest === 'yk') ensureYK(); else if (S.yk) { /* bleibt */ }
       player.x = a.x; player.z = a.z; player.y = 0.06; player.yaw = dest === 'yk' ? -Math.PI / 2 : Math.PI / 2; player.vx = player.vz = 0; player.h.group.rotation.set(0, player.yaw, 0);
-      S.flight = null; player.h.group.visible = true; bars(false); fadeEl().style.opacity = 0;
+      S.flight = null; player.h.group.visible = true; capEl().textContent = ''; bars(false); fadeEl().style.opacity = 0;
       C.camReset(player.yaw);
       camera.fov = 68; camera.updateProjectionMatrix();
       C.banner(dest === 'yk' ? 'NORTH YANKTON' : 'LOS SANTOS', dest === 'yk' ? 'Willkommen · −8 °C' : 'Willkommen zurück', 4500);
@@ -477,7 +491,7 @@ export function initAirport(ctx) {
     // Licht im Terminal
     const inT = px > 757 && px < 852 && Math.abs(pz) < 132 && player.y < 2.5 && !S.flight;
     const inF = (px > 778 && px < 832 && pz > -327 && pz < -263) || (px > 14935 && px < 15002 && Math.abs(pz) < 24);
-    lamp1.intensity = lerp(lamp1.intensity, inT || inF ? 22 : 0, 0.1); lamp2.intensity = lerp(lamp2.intensity, inT || inF ? 12 : 0, 0.1);
+    lamp1.intensity = lerp(lamp1.intensity, inT || inF ? 30 : 0, 0.1); lamp2.intensity = lerp(lamp2.intensity, inT || inF ? 14 : 0, 0.1);
     lamp1.position.set(px, 7.5, pz); lamp2.position.set(px + 10 * Math.sin(C.getCamYaw()), 6.5, pz + 10 * Math.cos(C.getCamYaw()));
     S.inT = inT || inF;
     // Tafeln aktualisieren
@@ -494,13 +508,16 @@ export function initAirport(ctx) {
   }
   // ---------- Himmel/Nebel/Beleuchtung (nach updateSky) ----------
   AIR.post = () => {
-    const px = player.x;
-    if (px > 5000 || (S.flight && S.flight.phase === 'cruise')) { /* Yankton: Winterhimmel */ }
-    if (px > 5000 && !S.flight) {
-      C.sky.top.set('#8da6c4'); C.sky.hor.set('#dce6f0'); C.scene.fog.color.set('#dce6f0'); C.scene.fog.density = 0.0034; C.sun.intensity *= 0.7; C.hemi.intensity = Math.max(C.hemi.intensity, 0.7);
+    const px = player.x, bl = C.bloom?.();
+    let dim = 0;
+    if (px > 5000 && !S.flight) { // Yankton: heller, verschneiter Wintertag (unabhängig von der Tageszeit)
+      C.sky.top.set('#7f9bbd'); C.sky.hor.set('#d4e0ec'); C.scene.fog.color.set('#d4e0ec'); C.scene.fog.density = 0.0026;
+      C.sun.intensity = Math.max(C.sun.intensity, 2.0); C.sun.color.set('#f0f4ff'); C.hemi.intensity = Math.max(C.hemi.intensity, 1.1); C.hemi.color.set('#dfe9f5'); C.hemi.groundColor.set('#9fb0c4'); C.scene.environmentIntensity = Math.max(C.scene.environmentIntensity, 0.8);
     }
-    if (S.inT) { C.sun.intensity *= 0.35; C.hemi.intensity = Math.max(C.hemi.intensity, 1.0); C.scene.environmentIntensity = Math.max(C.scene.environmentIntensity, 0.6); }
-    if (S.flight) { C.scene.fog.density = 0.00012; if (S.flight.phase === 'climb' || S.flight.phase === 'cruise') C.scene.fog.density = 0.00008; }
+    const cab = player.y > 2.3 && px < 3000 && px > 850 && px < 890 || (player.y > 2.3 && px > 15000 && px < 15040) || (player.y > 1.2 && px > 876 && px < 884 && player.z < -255 && player.z > -315);
+    if (S.inT || cab) { dim = 1; C.sun.intensity *= 0.12; C.hemi.intensity = cab ? 0.75 : 0.7; C.scene.environmentIntensity = 0.3; }
+    if (bl) bl.strength = lerp(bl.strength, dim ? 0.05 : bl.strength, 0.5);
+    if (S.flight) { C.scene.fog.density = S.flight.phase === 'climb' || S.flight.phase === 'cruise' ? 0.00008 : 0.00012; }
   };
   // ---------- Karte ----------
   AIR.pois = [{ x: 722, z: 0, col: '#4aa8ff', sym: '✈' }, { x: 740, z: -292, col: '#d9b45a', sym: 'J' }];

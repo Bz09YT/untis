@@ -45,7 +45,7 @@ export function buildLS(env) {
     e: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
     g: new THREE.MeshStandardMaterial({ color: 0xa8c8dc, transparent: true, opacity: 0.22, roughness: 0.04, metalness: 0.6, depthWrite: false }),
   };
-  mats.e.color.setScalar(1.6);
+  mats.e.color.setScalar(1.15);
   // ---------- Beläge ----------
   const asph = TEX.asphalt.clone(); asph.needsUpdate = true;
   const conc = tex(512, 512, (c, w, h) => { c.fillStyle = '#a9a8a2'; c.fillRect(0, 0, w, h); for (let i = 0; i < 3000; i++) { c.fillStyle = `rgba(${Math.random() < 0.5 ? '255,255,255' : '0,0,0'},${Math.random() * 0.07})`; c.fillRect(Math.random() * w, Math.random() * h, 3, 3); } c.strokeStyle = 'rgba(0,0,0,.28)'; c.lineWidth = 2; c.strokeRect(0, 0, w, h); c.beginPath(); c.moveTo(w / 2, 0); c.lineTo(w / 2, h); c.stroke(); });
@@ -88,8 +88,8 @@ export function buildLS(env) {
   for (let i = 0; i < 4; i++) for (const sx of [-1, 1]) B.box('e', 0.7, 0.5, 0.7, R.x + sx * 22, 0.3, R.z1 + 20 + i * 2, i % 2 ? '#ff3a2a' : '#ffffff');
   // ---------- Terminal-Hülle ----------
   const mid = (T.z0 + T.z1) / 2, tl = T.z1 - T.z0, tw = T.x1 - T.x0, H = T.H;
-  const floorTex = tex(512, 512, (c, w, h) => { c.fillStyle = '#a9a69f'; c.fillRect(0, 0, w, h); c.strokeStyle = 'rgba(70,70,70,.35)'; c.lineWidth = 2; c.strokeRect(0, 0, w, h); c.strokeStyle = 'rgba(255,255,255,.4)'; c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.moveTo(w / 2, 0); c.lineTo(w / 2, h); c.stroke(); for (let i = 0; i < 1800; i++) { c.fillStyle = `rgba(0,0,0,${Math.random() * 0.04})`; c.fillRect(Math.random() * w, Math.random() * h, 4, 4); } }, [tw / 4, tl / 4]);
-  const fm = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.25, metalness: 0.1 });
+  const floorTex = tex(512, 512, (c, w, h) => { c.fillStyle = '#7d7a74'; c.fillRect(0, 0, w, h); c.strokeStyle = 'rgba(30,30,30,.45)'; c.lineWidth = 2; c.strokeRect(0, 0, w, h); c.strokeStyle = 'rgba(255,255,255,.4)'; c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.moveTo(w / 2, 0); c.lineTo(w / 2, h); c.stroke(); for (let i = 0; i < 1800; i++) { c.fillStyle = `rgba(0,0,0,${Math.random() * 0.04})`; c.fillRect(Math.random() * w, Math.random() * h, 4, 4); } }, [tw / 4, tl / 4]);
+  const fm = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.42, metalness: 0.0, envMapIntensity: 0.35, color: 0xd8d4cc });
   quad(out.interior, fm, tw, tl, (T.x0 + T.x1) / 2, 0.06, mid);
   // Dach & Fassaden
   B.box('v', tw + 28, 0.9, tl + 6, (T.x0 + T.x1) / 2 + 1, H + 0.45, mid, '#f1f2f3');
@@ -190,13 +190,16 @@ export function buildLS(env) {
   IB.box('v', 3.6, 0.85, 0.9, 809, 0.43, -2.35, '#b8bec6'); // Ablagetisch
   for (let i = 0; i < 4; i++) IB.box('v', 0.5, 0.05, 0.38, 807.8 + i * 0.5, 0.88, -2.35, '#3a7bff');
   IB.box('m', 8.6, 0.25, 1.0, 819.4, 0.82, -2.0, '#2a2d31'); // Band nach Röntgentunnel (Teil 1)
-  IB.box('v', 5, 1.9, 1.5, 816, 1.0, -2.0, '#2c3e5a'); // Röntgentunnel
-  IB.box('e', 0.05, 0.4, 0.7, 813.45, 1.0, -2.0, '#0a0f14');
+  IB.box('v', 5, 1.8, 1.7, 816, 0.95, -2.0, '#3a4a60'); // Röntgengerät
+  IB.box('v', 5.1, 0.12, 1.8, 816, 1.9, -2.0, '#f2c200'); IB.box('v', 5.05, 0.5, 1.75, 816, 0.25, -2.0, '#1d2733');
+  for (const ex of [813.45, 818.55]) { IB.box('v', 0.12, 0.85, 1.05, ex, 1.25, -2.0, '#06080b'); for (let k = -4; k <= 4; k++) IB.box('v', 0.05, 0.62, 0.1, ex + (ex < 816 ? -0.06 : 0.06), 1.12, -2.0 + k * 0.12, '#15171a'); IB.box('e', 0.05, 0.05, 1.3, ex + (ex < 816 ? -0.07 : 0.07), 1.72, -2.0, '#2f8bff'); }
+  IB.box('v', 0.55, 0.38, 0.06, 815.6, 2.25, -1.4, '#15171a'); IB.box('e', 0.48, 0.3, 0.02, 815.6, 2.25, -1.36, '#41ff9a'); IB.box('m', 0.1, 0.3, 0.1, 815.6, 2.05, -1.4, '#8d949b');
+  for (let x = 806.6; x < 825.4; x += 0.35) { if (x > 813.3 && x < 818.7) continue; IB.box('v', 0.12, 0.03, 0.9, x, 0.96, -2.0, '#111'); }
   IB.box('m', 8, 0.25, 1.0, 822.6, 0.82, -2.0, '#2a2d31');
   IB.box('v', 3.6, 0.85, 1.0, 825.6, 0.43, -2.35, '#b8bec6');
   // Metalldetektor-Torbogen auf der Spur
   const arch = new THREE.Group(); const ab = new Batch();
-  ab.box('v', 0.4, 2.3, 0.3, 0, 1.15, -1.0, '#e8ebee'); ab.box('v', 0.4, 2.3, 0.3, 0, 1.15, 1.0, '#e8ebee'); ab.box('v', 0.4, 0.35, 2.3, 0, 2.3, 0, '#e8ebee');
+  ab.box('v', 0.5, 2.3, 0.32, 0, 1.15, -1.0, '#e8ebee'); ab.box('v', 0.5, 2.3, 0.32, 0, 1.15, 1.0, '#e8ebee'); ab.box('v', 0.5, 0.38, 2.34, 0, 2.3, 0, '#e8ebee'); ab.box('e', 0.06, 2.1, 0.05, -0.27, 1.1, -0.86, '#33ff66'); ab.box('e', 0.06, 2.1, 0.05, -0.27, 1.1, 0.86, '#33ff66'); ab.box('e', 0.06, 0.05, 1.7, -0.27, 2.14, 0, '#33ff66'); ab.box('m', 0.12, 0.2, 0.5, 0.0, 2.55, 0, '#222');
   ab.build(arch, mats); arch.position.set(LS.SEC.scanX, 0.06, 0); out.interior.add(arch);
   out.scanLight = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.25, 1.4), new THREE.MeshBasicMaterial({ color: 0x33ff66, toneMapped: false })); out.scanLight.position.set(LS.SEC.scanX - 0.22, 2.3, 0); out.interior.add(out.scanLight);
   // Tray-Meshes
@@ -245,7 +248,7 @@ export function buildLS(env) {
   // ---------- Private Terminal (FBO) ----------
   const F = LS.FBO, fb = new Batch(), fi = new Batch();
   const fx = (F.x0 + F.x1) / 2, fz = (F.z0 + F.z1) / 2, fw = F.x1 - F.x0, fd = F.z1 - F.z0;
-  fb.box('v', fw + 4, 0.7, fd + 4, fx, 5.6, fz, '#2a2d31'); fb.box('v', fw, 0.2, fd, fx, 0.1, fz, '#c8bfae');
+  fb.box('v', fw + 4, 0.7, fd + 4, fx, 5.6, fz, '#9a9488'); fb.box('v', fw, 0.2, fd, fx, 0.1, fz, '#c8bfae');
   fb.box('v', 0.6, 5.2, fd, F.x0, 2.6, fz, '#bfae92'); // Westwand (Holz/Stein)
   fb.box('v', 0.6, 5.2, 6, F.x1, 2.6, F.z0 + 3, '#bfae92'); fb.box('v', 0.6, 5.2, 6, F.x1, 2.6, F.z1 - 3, '#bfae92');
   fb.box('v', fw, 5.2, 0.6, fx, 2.6, F.z0, '#bfae92'); fb.box('v', fw, 5.2, 0.6, fx, 2.6, F.z1, '#bfae92');
@@ -271,7 +274,7 @@ export function buildLS(env) {
   out.statics = LS.GATES.map((g, gi) => { const p = buildAirliner({ ...liv[gi], door: false }); p.position.set(LS.PX, 0.05, g); root.add(p); return p; });
   out.plane = buildAirliner({ ...liv[0], door: true }); out.plane.position.set(LS.PX, 0.05, LS.GATES[2]); root.add(out.plane); out.statics[2].visible = false;
   out.cabin = buildCabin('liner'); out.plane.userData.body.add(out.cabin); out.cabin.position.y = 0; // Kabinenkoordinaten relativ zur Achse
-  out.jets = LS.JZ.map((z, i) => { const j = buildBizjet({ door: i === 1, body: ['#f6f6f2', '#1c2430', '#e8e0d0'][i], stripe: ['#222a36', '#d9b45a', '#7a2e2e'][i], tail: ['#222a36', '#d9b45a', '#7a2e2e'][i], name: 'LS JETS' }); j.position.set(LS.JX, 0.05, z); root.add(j); return j; });
+  out.jets = LS.JZ.map((z, i) => { const j = buildBizjet({ door: i === 1, body: ['#e8e0d0', '#f6f6f2', '#1c2430'][i], stripe: ['#7a2e2e', '#d9b45a', '#222a36'][i], tail: ['#7a2e2e', '#d9b45a', '#222a36'][i], name: 'LS JETS' }); j.position.set(LS.JX, 0.05, z); root.add(j); return j; });
   out.jetCabin = buildCabin('jet'); out.jets[1].userData.body.add(out.jetCabin);
   return out;
 }
