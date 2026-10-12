@@ -45,7 +45,7 @@ export function buildYankton(env) {
   sol(T.x0, T.x1, T.z0 - 0.5, T.z0 + 0.5, T.H); sol(T.x0, T.x1, T.z1 - 0.5, T.z1 + 0.5, T.H);
   B.box('v', 0.8, T.H, 16, T.x0, T.H / 2, -14, '#7a5230'); B.box('v', 0.8, T.H, 16, T.x0, T.H / 2, 14, '#7a5230'); sol(T.x0 - 0.4, T.x0 + 0.4, T.z0, -6, T.H); sol(T.x0 - 0.4, T.x0 + 0.4, 6, T.z1, T.H);
   B.box('v', 0.8, T.H - 3, 12, T.x0, T.H - 1.5, 0, '#7a5230');
-  const fl = new THREE.Mesh(new THREE.PlaneGeometry(tw, T.z1 - T.z0), new THREE.MeshStandardMaterial({ color: 0x6b5238, roughness: 0.6 })); fl.rotation.x = -Math.PI / 2; fl.position.set((T.x0 + T.x1) / 2, 0.07, 0); root.add(fl);
+  const fl = new THREE.Mesh(new THREE.PlaneGeometry(tw, T.z1 - T.z0), new THREE.MeshStandardMaterial({ color: 0xa88a62, roughness: 0.6 })); fl.rotation.x = -Math.PI / 2; fl.position.set((T.x0 + T.x1) / 2, 0.07, 0); root.add(fl);
   const ge = new THREE.Mesh(new THREE.PlaneGeometry(T.z1 - T.z0, T.H), mats.g); ge.rotation.y = Math.PI / 2; ge.position.set(T.x1, T.H / 2, 0); root.add(ge);
   const bz = YK.bz; sol(T.x1 - 0.2, T.x1 + 0.2, T.z0, bz - 1.3, T.H); sol(T.x1 - 0.2, T.x1 + 0.2, bz + 1.3, T.z1, T.H);
   const door = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.6, 2.4), new THREE.MeshStandardMaterial({ color: 0xa8c8dc, transparent: true, opacity: 0.35, roughness: 0.05, metalness: 0.5, depthWrite: false })); door.position.set(T.x1, 1.3, bz); root.add(door);

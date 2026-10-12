@@ -182,14 +182,14 @@ export function buildCabin(kind) {
   const tex = canvasTex(jet ? 512 : 2048, 256, (c, w, h) => {
     c.fillStyle = jet ? '#d8cfbf' : '#e6e3dc'; c.fillRect(0, 0, w, h);
     c.fillStyle = jet ? '#8a6c46' : '#b8b4aa'; c.fillRect(0, 0, w, h * 0.05);
-    for (const th of [75, 285]) {
+    for (const th of [255, 105]) {
       const vc = (1 - th / 360) * h, vh = jet ? 0.07 : 0.05;
       for (const z of winZ) { const u = (z - cfg.z0) / cfg.L * w; c.clearRect(u - w / cfg.L * cfg.win / 2, vc - h * vh / 2, w / cfg.L * cfg.win, h * vh); }
     }
   }, true, false);
   const lg = new THREE.CylinderGeometry(R, R, cfg.L, 40, 1, true); lg.rotateX(Math.PI / 2); // Achse z
   const lp = lg.attributes.position, lu = lg.attributes.uv;
-  for (let i = 0; i < lp.count; i++) { const x = lp.getX(i), y = lp.getY(i), z = lp.getZ(i); const th = (Math.atan2(x, y) + Math.PI * 2) % (Math.PI * 2); lu.setXY(i, (z + cfg.L / 2) / cfg.L, th / (Math.PI * 2)); lp.setZ(i, z + cfg.z0 + cfg.L / 2); }
+  for (let i = 0; i < lp.count; i++) { const z = lp.getZ(i), uc = lu.getX(i); lu.setXY(i, (z + cfg.L / 2) / cfg.L, 1 - uc); lp.setZ(i, z + cfg.z0 + cfg.L / 2); }
   // Nahtstelle: Vertices bei th~0/2pi doppelt -> Dreiecke über Naht lassen UV-Sprung; Zylinder hat doppelte Randvertices, daher ok
   lg.computeVertexNormals();
   const liner = new THREE.Mesh(lg, new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.5, side: THREE.BackSide, roughness: 0.8, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.12 }));

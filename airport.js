@@ -223,18 +223,19 @@ export function initAirport(ctx) {
   }
   function putBag() {
     lockFor(1.5, 'pickup', Math.PI, () => {
+      if (C.getWeapon() > 0) { S.stash = C.getWeapon(); C.setWeapon(0); C.notice('Waffe liegt mit im Gepäck – wird am Ende zurückgegeben', 3000); say('Waffen bitte immer in die Wanne – die bekommen Sie am Ausgang zurück.', 'Sicherheit', 'dispatch'); }
       S.sec = 2; S.trayX = 0; W.tray.visible = true; W.tray.position.set(808.4, 0.98, -2.1); barrierSet(1, false); S.trayT = 0; S.secScanned = false; C.sfx.click();
       C.notice('Gepäck liegt auf dem Band · jetzt durch den Metalldetektor', 2400);
     });
   }
   function takeBag() {
     if (S.trayX < 22.5) { C.notice('Das Gepäck ist noch im Röntgengerät …', 1500); return; }
-    lockFor(1.4, 'pickup', Math.PI, () => { W.tray.visible = false; S.secDone = true; S.sec = 4; S.trayT = -1; barrierSet(2, false); C.sfx.liftBeep(); C.notice('Sicherheitskontrolle bestanden · Gate suchen', 2600); say('Alles in Ordnung. Guten Flug!', 'Sicherheit', 'dispatch'); });
+    lockFor(1.4, 'pickup', Math.PI, () => { W.tray.visible = false; if (S.stash) { C.setWeapon(S.stash); S.stash = 0; } S.secDone = true; S.sec = 4; S.trayT = -1; barrierSet(2, false); C.sfx.liftBeep(); C.notice('Sicherheitskontrolle bestanden · Gate suchen', 2600); say('Alles in Ordnung. Guten Flug!', 'Sicherheit', 'dispatch'); });
   }
   function scannerCheck() {
     const bad = C.getWeapon() > 0;
     if (!bad) { W.scanLight.material.color.set(0x33ff66); S.alarm = 0; C.sfx.liftBeep(); C.notice('Scanner: kein Alarm', 1400); S.secScanned = true; S.sec = 3; return; }
-    S.alarm = 4; S.secScanned = true; S.sec = 3; W.scanLight.material.color.set(0xff2a1a); C.setWeapon(0);
+    S.alarm = 4; S.stash = 0; S.secScanned = true; S.sec = 3; W.scanLight.material.color.set(0xff2a1a); C.setWeapon(0);
     for (let i = 0; i < 3; i++) setTimeout(() => C.sfx.horn?.(player.x, player.z, 0.4), i * 450);
     say('Alarm! Sie führen eine Waffe mit sich. Die Waffe wird beschlagnahmt – das hier ist ein Flughafen!', 'Sicherheit', 'dispatch'); C.notice('⚠ ALARM · Waffe beschlagnahmt', 3000);
     guard2.pose = 'talk';
@@ -515,7 +516,9 @@ export function initAirport(ctx) {
       C.sun.intensity = Math.max(C.sun.intensity, 2.0); C.sun.color.set('#f0f4ff'); C.hemi.intensity = Math.max(C.hemi.intensity, 1.1); C.hemi.color.set('#dfe9f5'); C.hemi.groundColor.set('#9fb0c4'); C.scene.environmentIntensity = Math.max(C.scene.environmentIntensity, 0.8);
     }
     const cab = player.y > 2.3 && px < 3000 && px > 850 && px < 890 || (player.y > 2.3 && px > 15000 && px < 15040) || (player.y > 1.2 && px > 876 && px < 884 && player.z < -255 && player.z > -315);
-    if (S.inT || cab) { dim = 1; C.sun.intensity *= 0.12; C.hemi.intensity = cab ? 0.75 : 0.7; C.scene.environmentIntensity = 0.3; }
+    const ykT = px > 14935 && px < 15002 && Math.abs(player.z) < 24 && player.y < 2;
+    if (ykT) { C.sun.intensity = Math.max(C.sun.intensity, 1.4); C.hemi.intensity = Math.max(C.hemi.intensity, 1.5); }
+    else if (S.inT || cab) { dim = 1; C.sun.intensity *= 0.12; C.hemi.intensity = cab ? 0.75 : 0.7; C.scene.environmentIntensity = 0.3; }
     if (bl) bl.strength = lerp(bl.strength, dim ? 0.05 : bl.strength, 0.5);
     if (S.flight) { C.scene.fog.density = S.flight.phase === 'climb' || S.flight.phase === 'cruise' ? 0.00008 : 0.00012; }
   };
